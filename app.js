@@ -430,11 +430,13 @@ let audioChunks      = [];
 let recStartTime     = null;
 let recTimerInterval = null;
 let pendingAudioBlob = null;
+let shouldSaveRecording = false;
 
 document.getElementById('btn-new-recording').addEventListener('click', openRecordModal);
 
 function openRecordModal() {
   pendingAudioBlob = null;
+  shouldSaveRecording = false;
   recPhase.style.display   = '';
   titlePhase.classList.remove('visible');
   btnRecord.classList.remove('pulsing');
@@ -448,6 +450,7 @@ function openRecordModal() {
 
 function closeRecordModal() {
   modalOverlay.classList.add('hidden');
+  shouldSaveRecording = false;
   stopMediaRecorderSilent();
 }
 
@@ -471,6 +474,7 @@ async function startRecording() {
 
   audioChunks  = [];
   recStartTime = Date.now();
+  shouldSaveRecording = false;
   S.recording  = true;
 
   const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
@@ -480,7 +484,7 @@ async function startRecording() {
   mediaRecorder.ondataavailable = e => { if (e.data.size > 0) audioChunks.push(e.data); };
   mediaRecorder.onstop = () => {
     stream.getTracks().forEach(t => t.stop());
-    if (S.recording === false) return; // abgebrochen
+    if (!shouldSaveRecording) return; // abgebrochen
     pendingAudioBlob = new Blob(audioChunks, { type: 'audio/webm' });
     showTitleInput();
   };
@@ -509,19 +513,20 @@ async function startRecording() {
 
 async function stopRecording() {
   if (!mediaRecorder || mediaRecorder.state === 'inactive') return;
-  S.recording = true; // Flagge: Aufnahme soll gespeichert werden
+  shouldSaveRecording = true;
   clearInterval(recTimerInterval);
   btnRecord.classList.remove('pulsing');
   btnRecord.textContent          = '⏺';
   recLabelEl.textContent         = 'Verarbeite…';
   recLabelEl.className           = '';
   mediaRecorder.stop();
-  S.recording = false; // nach stop() läuft onstop weiter
+  S.recording = false;
 }
 
 function stopMediaRecorderSilent() {
   if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-    S.recording = false; // Signal: onstop soll nicht speichern
+    shouldSaveRecording = false;
+    S.recording = false;
     clearInterval(recTimerInterval);
     mediaRecorder.onstop = () => {};
     mediaRecorder.stop();
