@@ -185,6 +185,46 @@ a:hover { text-decoration: underline; }
   transition: background var(--t), transform var(--t);
 }
 
+.btn-secondary {
+  width: 100%;
+  margin-top: 6px;
+  background: var(--white-soft);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  transition: background var(--t), border-color var(--t), color var(--t);
+}
+.btn-secondary:hover {
+  background: var(--white-mid);
+  border-color: var(--border-light);
+  color: var(--text);
+}
+
+.session-tools {
+  margin-top: 10px;
+  display: grid;
+  gap: 6px;
+}
+
+#session-search,
+#session-filter {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 7px 9px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+#session-search:focus,
+#session-filter:focus {
+  border-color: var(--accent);
+}
+
 #btn-new-recording:hover  { background: var(--accent-h); }
 #btn-new-recording:active { transform: scale(0.98); }
 
@@ -777,6 +817,29 @@ a:hover { text-decoration: underline; }
 }
 #record-label.recording { color: var(--red); font-weight: 600; }
 #record-label.warning   { color: var(--yellow); font-weight: 600; }
+
+#record-level-wrap {
+  margin: -4px auto 16px;
+  width: 72%;
+}
+
+#record-level-track {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--white-soft);
+  border: 1px solid var(--white-strong);
+  overflow: hidden;
+}
+
+#record-level-fill {
+  width: 100%;
+  height: 100%;
+  transform-origin: left center;
+  transform: scaleX(0.06);
+  background: linear-gradient(90deg, rgba(16,185,129,0.5), rgba(99,102,241,0.55));
+  opacity: 0.35;
+  transition: transform 110ms ease-out, opacity 110ms ease-out;
+}
 
 /* Titel-Eingabe nach Aufnahme */
 #title-phase { display: none; text-align: left; }

@@ -69,6 +69,17 @@
         <span class="wordmark-text">PrivateScribe</span>
       </div>
       <button id="btn-new-recording">＋ Neue Aufnahme</button>
+      <button id="btn-import-audio" class="btn-secondary">⤓ Audio importieren</button>
+      <div class="session-tools">
+        <input id="session-search" type="search" placeholder="Suchen…" aria-label="Sitzungen suchen">
+        <select id="session-filter" aria-label="Sitzungen filtern">
+          <option value="all">Alle</option>
+          <option value="done">Mit Transkript</option>
+          <option value="in-progress">In Arbeit</option>
+          <option value="error">Mit Fehler</option>
+          <option value="idle">Ohne Transkript</option>
+        </select>
+      </div>
     </div>
 
     <div id="session-list"></div>
@@ -104,6 +115,8 @@
       <input id="session-title-input" type="text" placeholder="Sitzungstitel…" />
       <div id="header-right">
         <span id="status-badge" class="status-badge idle"></span>
+        <button class="icon-btn" id="btn-export-transcript" title="Transkript exportieren">⤓ T</button>
+        <button class="icon-btn" id="btn-export-notes" title="Notizen exportieren">⤓ N</button>
         <button class="icon-btn" id="btn-copy" title="Transkript kopieren">⎘</button>
       </div>
     </div>
@@ -151,6 +164,9 @@
 
     <div id="record-phase">
       <button id="btn-record">⏺</button>
+      <div id="record-level-wrap" aria-hidden="true">
+        <div id="record-level-track"><div id="record-level-fill"></div></div>
+      </div>
       <div id="record-timer">00:00:00</div>
       <div id="record-label">Bereit zum Aufnehmen</div>
       <div id="record-phase-btns" style="margin-top:4px">
@@ -201,9 +217,11 @@
 
 <!-- ══ CONTEXT MENU ══════════════════════════════════════════ -->
 <div id="context-menu" class="context-menu hidden"></div>
+<div id="export-menu" class="context-menu hidden"></div>
 
 <!-- ══ AUDIO (unsichtbar) ════════════════════════════════════ -->
 <audio id="hidden-audio"></audio>
+<input id="audio-import-input" type="file" accept="audio/*" class="hidden">
 
 <!-- App laden (ES-Modul) -->
 <script type="module" src="app.js"></script>
