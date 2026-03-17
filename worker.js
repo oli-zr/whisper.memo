@@ -49,16 +49,14 @@ self.addEventListener('message', async ({ data }) => {
       ? new Float32Array(audioBuffer)
       : ((audio instanceof Float32Array) ? audio : new Float32Array(audio));
 
-    const result = await transcriber(
-      { array: audioArray, sampling_rate: sampleRate ?? 16000 },
-      {
-        language:          'german',
-        task:              'transcribe',
-        chunk_length_s:    30,   // lange Aufnahmen in 30s-Chunks
-        stride_length_s:   5,
-        return_timestamps: false,
-      }
-    );
+    const result = await transcriber(audioArray, {
+      sampling_rate:     sampleRate ?? 16000,
+      language:          'german',
+      task:              'transcribe',
+      chunk_length_s:    30,   // lange Aufnahmen in 30s-Chunks
+      stride_length_s:   5,
+      return_timestamps: false,
+    });
 
     self.postMessage({ type: 'result', text: (result.text ?? '').trim() });
 
