@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Memo — Lokale Aufnahmen</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ══ BANNER-BEREICH (Toasts unten rechts) ══════════════════ -->
+<div id="banner-area"></div>
+
+<!-- ══ WELCOME / ONBOARDING ══════════════════════════════════ -->
+<div id="welcome-screen">
+  <div class="welcome-card">
+    <span class="welcome-icon">🎙️</span>
+    <h1>Willkommen bei Memo</h1>
+    <p class="welcome-sub">
+      Aufnahmen &amp; Transkription – komplett lokal, kein Server, keine Installation.
+      Whisper läuft direkt im Browser.
+    </p>
+
+    <div class="model-choice-label">Whisper-Modell wählen</div>
+    <div class="model-options">
+      <button class="model-option selected" data-model="small">
+        <div class="model-opt-name">Small</div>
+        <div class="model-opt-size">~190 MB</div>
+        <div class="model-opt-desc">Schnell, gut für klare Aufnahmen</div>
+      </button>
+      <button class="model-option" data-model="medium">
+        <div class="model-opt-name">Medium</div>
+        <div class="model-opt-size">~380 MB</div>
+        <div class="model-opt-desc">Genauer, besser bei Dialekt &amp; Rauschen</div>
+      </button>
+    </div>
+
+    <div class="welcome-notes">
+      <div class="welcome-note">
+        <span class="ni">⬇️</span>
+        <span>Beim ersten Transkribieren wird das Modell heruntergeladen und im Browser gecacht – danach funktioniert alles offline.</span>
+      </div>
+      <div class="welcome-note">
+        <span class="ni">🔒</span>
+        <span>Alle Daten bleiben lokal auf deinem Mac. Nichts verlässt dein Gerät.</span>
+      </div>
+      <div class="welcome-note">
+        <span class="ni">⚠️</span>
+        <span>Bitte <strong>Chrome, Arc oder Brave</strong> verwenden — Safari unterstützt die File System API nicht.</span>
+      </div>
+    </div>
+
+    <button id="btn-choose-folder">📁 Arbeitsordner wählen →</button>
+  </div>
+</div>
+
+<!-- ══ HAUPT-APP (3-Spalten) ════════════════════════════════ -->
+<div id="app">
+
+  <!-- SIDEBAR -->
+  <aside id="sidebar">
+    <div id="sidebar-top">
+      <div class="app-wordmark">
+        <div class="wordmark-dot">🎙</div>
+        <span class="wordmark-text">Memo</span>
+      </div>
+      <button id="btn-new-recording">＋ Neue Aufnahme</button>
+    </div>
+
+    <div id="session-list"></div>
+
+    <div id="sidebar-footer">
+      <!-- Modell-Selector -->
+      <button class="model-selector" id="btn-model-selector">
+        <span class="model-selector-label">Modell</span>
+        <span class="model-selector-value" id="model-label">Whisper Small</span>
+        <span class="model-selector-arrow">▲</span>
+      </button>
+
+      <button class="sidebar-action-btn" id="btn-change-folder">
+        📁 Ordner wechseln
+      </button>
+    </div>
+  </aside>
+
+  <!-- TRANSKRIPT-SPALTE (leer) -->
+  <div id="empty-main">
+    <div class="empty-icon">🎙️</div>
+    <h3>Noch keine Aufnahmen</h3>
+    <p>Klicke auf „＋ Neue Aufnahme" um zu starten.</p>
+  </div>
+
+  <!-- TRANSKRIPT-SPALTE (aktive Sitzung) -->
+  <main id="transcript-col" class="hidden">
+    <div id="transcript-header">
+      <input id="session-title-input" type="text" placeholder="Sitzungstitel…" />
+      <div id="header-right">
+        <span id="status-badge" class="status-badge idle"></span>
+        <button class="icon-btn" id="btn-copy" title="Transkript kopieren">⎘</button>
+      </div>
+    </div>
+
+    <div id="transcript-body">
+      <!-- Download-Fortschritt -->
+      <div id="download-progress-label" class="hidden"></div>
+      <div id="download-progress-bar"   class="hidden">
+        <div id="download-progress-fill" style="width:0%"></div>
+      </div>
+
+      <div id="transcript-text"></div>
+      <div id="transcript-empty" class="hidden"></div>
+      <button id="btn-retry" class="hidden">↻ Erneut transkribieren</button>
+    </div>
+
+    <!-- Audio-Player -->
+    <div id="audio-section" class="hidden">
+      <div id="audio-player-row">
+        <button id="btn-play-pause" title="Abspielen/Pause">▶</button>
+        <input id="audio-seek" type="range" min="0" max="100" value="0" step="0.1">
+        <span id="audio-time">0:00 / 0:00</span>
+      </div>
+      <div id="audio-footer">
+        <button id="btn-delete-audio">🗑 Audiodatei löschen</button>
+      </div>
+    </div>
+  </main>
+
+  <!-- NOTIZEN-SPALTE -->
+  <aside id="notes-col" class="hidden">
+    <div id="notes-header">
+      <h2>Notizen</h2>
+      <span id="notes-save-indicator"></span>
+    </div>
+    <textarea id="notes-textarea" placeholder="Notizen zu dieser Sitzung…" spellcheck="true"></textarea>
+  </aside>
+</div>
+
+<!-- ══ AUFNAHME-MODAL ════════════════════════════════════════ -->
+<div id="record-modal-overlay" class="modal-overlay hidden">
+  <div class="record-modal">
+    <h2>Neue Aufnahme</h2>
+    <p class="modal-sub">Drücke den roten Button zum Starten</p>
+
+    <div id="record-phase">
+      <button id="btn-record">⏺</button>
+      <div id="record-timer">00:00:00</div>
+      <div id="record-label">Bereit zum Aufnehmen</div>
+      <div id="record-phase-btns" style="margin-top:4px">
+        <button class="mbtn ghost" id="btn-cancel-record" style="max-width:140px;margin:0 auto;display:block">Abbrechen</button>
+      </div>
+    </div>
+
+    <div id="title-phase">
+      <label for="title-input">Sitzungsname</label>
+      <input id="title-input" type="text" maxlength="80" />
+      <div class="modal-btns">
+        <button class="mbtn ghost"    id="btn-cancel-title">Abbrechen</button>
+        <button class="mbtn primary"  id="btn-save-recording">Speichern &amp; transkribieren</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ CONFIRM DIALOG ════════════════════════════════════════ -->
+<div id="confirm-overlay" class="hidden">
+  <div id="confirm-box">
+    <h3 id="confirm-title">Bist du sicher?</h3>
+    <p  id="confirm-text"></p>
+    <div class="confirm-btns">
+      <button class="cbtn cancel" id="btn-confirm-cancel">Abbrechen</button>
+      <button class="cbtn danger" id="btn-confirm-ok">Löschen</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ MODELL-DROPDOWN ═══════════════════════════════════════ -->
+<div id="model-dropdown" class="model-dropdown hidden">
+  <div class="model-drop-item" data-model="small">
+    <div>
+      <div class="mdi-name">Whisper Small</div>
+      <div class="mdi-meta">~190 MB · Schnell</div>
+    </div>
+    <span class="mdi-check">✓</span>
+  </div>
+  <div class="model-drop-item" data-model="medium">
+    <div>
+      <div class="mdi-name">Whisper Medium</div>
+      <div class="mdi-meta">~380 MB · Genauer</div>
+    </div>
+    <span class="mdi-check">✓</span>
+  </div>
+</div>
+
+<!-- ══ CONTEXT MENU ══════════════════════════════════════════ -->
+<div id="context-menu" class="context-menu hidden"></div>
+
+<!-- ══ AUDIO (unsichtbar) ════════════════════════════════════ -->
+<audio id="hidden-audio"></audio>
+
+<!-- App laden (ES-Modul) -->
+<script type="module" src="app.js"></script>
+
+</body>
+</html>
