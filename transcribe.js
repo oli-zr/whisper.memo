@@ -87,10 +87,11 @@ export function transcribeAudio(audioBlob, modelSize, onStatus) {
 
       w.addEventListener('message', handleMessage);
 
-      // Float32Array als Transferable übergeben (kein Kopieren der ~100-900 MB)
+      // Nur den Buffer übertragen und im Worker als Float32Array rekonstruieren.
+      // Das vermeidet Struktur-/Typ-Probleme beim structured clone.
       const transferBuffer = audioData.buffer;
       w.postMessage(
-        { type: 'transcribe', audio: audioData, sampleRate: 16000, modelSize },
+        { type: 'transcribe', audioBuffer: transferBuffer, sampleRate: 16000, modelSize },
         [transferBuffer]
       );
 

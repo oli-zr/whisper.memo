@@ -15,7 +15,7 @@ let loadedModelId = null;
 self.addEventListener('message', async ({ data }) => {
   if (data.type !== 'transcribe') return;
 
-  const { audio, sampleRate, modelSize } = data;
+  const { audio, audioBuffer, sampleRate, modelSize } = data;
 
   // Modell-ID wählen
   const modelId = modelSize === 'medium'
@@ -45,9 +45,9 @@ self.addEventListener('message', async ({ data }) => {
     self.postMessage({ type: 'status', value: 'transcribing' });
 
     // Float32Array aus transferiertem Buffer wiederherstellen
-    const audioArray = (audio instanceof Float32Array)
-      ? audio
-      : new Float32Array(audio);
+    const audioArray = (audioBuffer instanceof ArrayBuffer)
+      ? new Float32Array(audioBuffer)
+      : ((audio instanceof Float32Array) ? audio : new Float32Array(audio));
 
     const result = await transcriber(
       { array: audioArray, sampling_rate: sampleRate ?? 16000 },
