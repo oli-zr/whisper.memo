@@ -432,6 +432,13 @@ let recTimerInterval = null;
 let pendingAudioBlob = null;
 let shouldSaveRecording = false;
 
+const RECORDING_MIME_CANDIDATES = [
+  'audio/webm;codecs=opus',
+  'audio/webm',
+  'audio/ogg;codecs=opus',
+];
+const RECORDING_AUDIO_BITS_PER_SECOND = 24000;
+
 document.getElementById('btn-new-recording').addEventListener('click', openRecordModal);
 
 function openRecordModal() {
@@ -465,7 +472,16 @@ btnRecord.addEventListener('click', () => {
 async function startRecording() {
   let stream;
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        sampleRate: 16000,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+      video: false,
+    });
   } catch (e) {
     recLabelEl.textContent = '⚠️ Mikrofon-Zugriff verweigert';
     recLabelEl.className   = 'warning';
@@ -477,15 +493,18 @@ async function startRecording() {
   shouldSaveRecording = false;
   S.recording  = true;
 
-  const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-    ? 'audio/webm;codecs=opus' : 'audio/webm';
-  mediaRecorder = new MediaRecorder(stream, { mimeType: mime });
+  const mime = RECORDING_MIME_CANDIDATES.find(type => MediaRecorder.isTypeSupported(type));
+  const recorderOptions = {
+    audioBitsPerSecond: RECORDING_AUDIO_BITS_PER_SECOND,
+  };
+  if (mime) recorderOptions.mimeType = mime;
+  mediaRecorder = new MediaRecorder(stream, recorderOptions);
 
   mediaRecorder.ondataavailable = e => { if (e.data.size > 0) audioChunks.push(e.data); };
   mediaRecorder.onstop = () => {
     stream.getTracks().forEach(t => t.stop());
     if (!shouldSaveRecording) return; // abgebrochen
-    pendingAudioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+    pendingAudioBlob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
     showTitleInput();
   };
   mediaRecorder.start(1000);
