@@ -17,6 +17,7 @@ const S = {
   sessions:   [],         // Array<SessionObj>
   activeId:   null,       // string | null
   modelSize:  'small',    // 'small' | 'medium'
+  theme:      'dark',     // 'dark' | 'light'
   recording:  false,
 };
 
@@ -54,8 +55,10 @@ async function getSessionDir(session) {
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 async function boot() {
-  // Modell-Präferenz laden
+  // Präferenzen laden
   S.modelSize = localStorage.getItem('memo-model') || 'small';
+  S.theme = localStorage.getItem('memo-theme') || 'dark';
+  applyTheme();
 
   // FSA-Unterstützung prüfen
   if (!fsaSupported()) {
@@ -89,9 +92,28 @@ async function initApp() {
   renderSidebar();
   renderMainArea();
   updateModelSelector();
+  updateThemeToggle();
 
   // Worker vorladen (damit erstes Transkribieren schneller startet)
   warmUpWorker();
+}
+
+
+function applyTheme() {
+  document.documentElement.dataset.theme = S.theme;
+  updateThemeToggle();
+}
+
+function updateThemeToggle() {
+  const btn = document.getElementById('btn-theme-toggle');
+  if (!btn) return;
+  btn.textContent = S.theme === 'light' ? '☀️ Light Mode' : '🌙 Dark Mode';
+}
+
+function toggleTheme() {
+  S.theme = S.theme === 'dark' ? 'light' : 'dark';
+  localStorage.setItem('memo-theme', S.theme);
+  applyTheme();
 }
 
 // ── Welcome Screen ────────────────────────────────────────────────────────────
@@ -130,6 +152,8 @@ async function chooseFolder() {
     }
   }
 }
+
+document.getElementById('btn-theme-toggle').addEventListener('click', toggleTheme);
 
 document.getElementById('btn-change-folder').addEventListener('click', () => {
   showConfirm(
