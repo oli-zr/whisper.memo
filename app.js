@@ -18,12 +18,18 @@ const S = {
   activeId:   null,       // string | null
   modelSize:  'small',    // 'small' | 'medium'
   theme:      'dark',     // 'dark' | 'light'
+  searchQuery: '',
+  sessionFilter: 'all',
   recording:  false,
 };
 
 // Hilfsmethoden
 const getActive = () => S.sessions.find(s => s.id === S.activeId) ?? null;
 const findById  = (id) => S.sessions.find(s => s.id === id) ?? null;
+
+function isInProgressStatus(status) {
+  return ['decoding', 'loading', 'transcribing'].includes(status);
+}
 
 // ── Persistenz ────────────────────────────────────────────────────────────────
 async function loadIndex() {
@@ -89,6 +95,10 @@ async function initApp() {
   });
 
   S.activeId = null;
+  const searchEl = document.getElementById('session-search');
+  const filterEl = document.getElementById('session-filter');
+  if (searchEl) searchEl.value = S.searchQuery;
+  if (filterEl) filterEl.value = S.sessionFilter;
   renderSidebar();
   renderMainArea();
   updateModelSelector();
@@ -154,6 +164,27 @@ async function chooseFolder() {
 }
 
 document.getElementById('btn-theme-toggle').addEventListener('click', toggleTheme);
+document.getElementById('session-search').addEventListener('input', e => {
+  S.searchQuery = e.target.value || '';
+  renderSidebar();
+});
+document.getElementById('session-filter').addEventListener('change', e => {
+  S.sessionFilter = e.target.value;
+  renderSidebar();
+});
+
+const importInputEl = document.getElementById('audio-import-input');
+document.getElementById('btn-import-audio').addEventListener('click', () => importInputEl.click());
+importInputEl.addEventListener('change', async e => {
+  const file = e.target.files?.[0];
+  e.target.value = '';
+  if (!file) return;
+  if (!file.type.startsWith('audio/')) {
+    showBanner('Bitte eine gültige Audiodatei auswählen.', 'warning');
+    return;
+  }
+  await createSession(file.name.replace(/\.[^.]+$/, ''), file);
+});
 
 document.getElementById('btn-change-folder').addEventListener('click', () => {
   showConfirm(
@@ -166,12 +197,25 @@ document.getElementById('btn-change-folder').addEventListener('click', () => {
 // ── Sidebar rendern ───────────────────────────────────────────────────────────
 function renderSidebar() {
   const list   = document.getElementById('session-list');
-  const sorted = [...S.sessions].sort((a, b) =>
+  const query = S.searchQuery.trim().toLowerCase();
+  const filtered = S.sessions.filter(s => {
+    if (S.sessionFilter === 'done' && s.transcriptStatus !== 'done') return false;
+    if (S.sessionFilter === 'error' && s.transcriptStatus !== 'error') return false;
+    if (S.sessionFilter === 'idle' && s.transcriptStatus !== 'idle') return false;
+    if (S.sessionFilter === 'in-progress' && !isInProgressStatus(s.transcriptStatus)) return false;
+    if (!query) return true;
+    return [s.title, s.transcript || '', s.notes || '']
+      .join(' ')
+      .toLowerCase()
+      .includes(query);
+  });
+  const sorted = [...filtered].sort((a, b) =>
     new Date(b.createdAt) - new Date(a.createdAt)
   );
 
   if (sorted.length === 0) {
-    list.innerHTML = `<div style="padding:20px 8px;color:var(--text-3);font-size:12px;text-align:center;line-height:1.6">Noch keine Aufnahmen.<br>Klicke auf „＋ Neue Aufnahme".</div>`;
+    const hasFilters = !!query || S.sessionFilter !== 'all';
+    list.innerHTML = `<div style="padding:20px 8px;color:var(--text-3);font-size:12px;text-align:center;line-height:1.6">${hasFilters ? 'Keine Treffer für Suche/Filter.' : 'Noch keine Aufnahmen.<br>Klicke auf „＋ Neue Aufnahme".'}</div>`;
     return;
   }
 
@@ -429,6 +473,16 @@ document.getElementById('btn-copy').addEventListener('click', () => {
     .then(() => showBanner('✓ Transkript kopiert', 'success'));
 });
 
+document.getElementById('btn-export-transcript').addEventListener('click', e => {
+  e.stopPropagation();
+  showExportMenu(e.currentTarget, 'transcript');
+});
+
+document.getElementById('btn-export-notes').addEventListener('click', e => {
+  e.stopPropagation();
+  showExportMenu(e.currentTarget, 'notes');
+});
+
 // ── Retry ─────────────────────────────────────────────────────────────────────
 document.getElementById('btn-retry').addEventListener('click', async () => {
   const s = getActive();
@@ -455,6 +509,12 @@ let recStartTime     = null;
 let recTimerInterval = null;
 let pendingAudioBlob = null;
 let shouldSaveRecording = false;
+let meterAudioCtx = null;
+let meterAnalyser = null;
+let meterSource = null;
+let meterRAF = null;
+
+const meterFillEl = document.getElementById('record-level-fill');
 
 const RECORDING_MIME_CANDIDATES = [
   'audio/webm;codecs=opus',
@@ -474,6 +534,7 @@ function openRecordModal() {
   recTimerEl.textContent   = '00:00:00';
   recLabelEl.textContent   = 'Bereit zum Aufnehmen';
   recLabelEl.className     = '';
+  updateRecordingLevel(0);
   document.querySelector('.record-modal .modal-sub').textContent = 'Drücke den roten Button zum Starten';
   titleInput.value         = '';
   modalOverlay.classList.remove('hidden');
@@ -482,6 +543,7 @@ function openRecordModal() {
 function closeRecordModal() {
   modalOverlay.classList.add('hidden');
   shouldSaveRecording = false;
+  stopRecordingLevelMeter();
   stopMediaRecorderSilent();
 }
 
@@ -511,6 +573,8 @@ async function startRecording() {
     recLabelEl.className   = 'warning';
     return;
   }
+
+  startRecordingLevelMeter(stream);
 
   audioChunks  = [];
   recStartTime = Date.now();
@@ -563,6 +627,7 @@ async function stopRecording() {
   recLabelEl.textContent         = 'Verarbeite…';
   recLabelEl.className           = '';
   mediaRecorder.stop();
+  stopRecordingLevelMeter();
   S.recording = false;
 }
 
@@ -574,7 +639,55 @@ function stopMediaRecorderSilent() {
     mediaRecorder.onstop = () => {};
     mediaRecorder.stop();
   }
+  stopRecordingLevelMeter();
   S.recording = false;
+}
+
+function updateRecordingLevel(level) {
+  if (!meterFillEl) return;
+  const eased = Math.min(1, Math.max(0, level));
+  meterFillEl.style.transform = `scaleX(${Math.max(0.06, eased)})`;
+  meterFillEl.style.opacity = `${0.35 + (eased * 0.6)}`;
+}
+
+function startRecordingLevelMeter(stream) {
+  stopRecordingLevelMeter();
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  if (!AudioCtx) return;
+
+  meterAudioCtx = new AudioCtx();
+  meterAnalyser = meterAudioCtx.createAnalyser();
+  meterAnalyser.fftSize = 256;
+  meterAnalyser.smoothingTimeConstant = 0.88;
+  meterSource = meterAudioCtx.createMediaStreamSource(stream);
+  meterSource.connect(meterAnalyser);
+
+  const data = new Uint8Array(meterAnalyser.fftSize);
+  const tick = () => {
+    if (!meterAnalyser) return;
+    meterAnalyser.getByteTimeDomainData(data);
+    let sum = 0;
+    for (let i = 0; i < data.length; i++) {
+      const normalized = (data[i] - 128) / 128;
+      sum += normalized * normalized;
+    }
+    const rms = Math.sqrt(sum / data.length);
+    updateRecordingLevel(Math.min(1, rms * 3.2));
+    meterRAF = requestAnimationFrame(tick);
+  };
+  tick();
+}
+
+function stopRecordingLevelMeter() {
+  if (meterRAF) cancelAnimationFrame(meterRAF);
+  meterRAF = null;
+  if (meterSource) meterSource.disconnect();
+  if (meterAnalyser) meterAnalyser.disconnect();
+  if (meterAudioCtx) meterAudioCtx.close().catch(() => {});
+  meterSource = null;
+  meterAnalyser = null;
+  meterAudioCtx = null;
+  updateRecordingLevel(0);
 }
 
 function showTitleInput() {
@@ -760,6 +873,7 @@ document.getElementById('model-dropdown').querySelectorAll('.model-drop-item').f
 document.addEventListener('click', () => {
   document.getElementById('model-dropdown').classList.add('hidden');
   document.getElementById('context-menu').classList.add('hidden');
+  document.getElementById('export-menu').classList.add('hidden');
 });
 
 // ── Kontext-Menü ──────────────────────────────────────────────────────────────
@@ -782,6 +896,75 @@ function showContextMenu(x, y, sessionId) {
       else                                 confirmDeleteSession(sessionId);
     });
   });
+}
+
+function showExportMenu(anchorEl, kind) {
+  const s = getActive();
+  if (!s) return;
+
+  const menu = document.getElementById('export-menu');
+  const label = kind === 'transcript' ? 'Transkript' : 'Notizen';
+  menu.innerHTML = `
+    <button class="ctx-item" data-format="txt">${label} als .txt</button>
+    <button class="ctx-item" data-format="md">${label} als .md</button>
+    <button class="ctx-item" data-format="json">${label} als .json</button>
+  `;
+
+  const rect = anchorEl.getBoundingClientRect();
+  menu.style.left = Math.min(rect.left, window.innerWidth - 210) + 'px';
+  menu.style.top = Math.min(rect.bottom + 8, window.innerHeight - 130) + 'px';
+  menu.classList.remove('hidden');
+
+  menu.querySelectorAll('.ctx-item').forEach(btn => {
+    btn.addEventListener('click', () => {
+      menu.classList.add('hidden');
+      exportSessionField(s, kind, btn.dataset.format);
+    });
+  });
+}
+
+function exportSessionField(session, kind, format) {
+  const base = session.title || 'aufnahme';
+  const slug = base.replace(/[^a-z0-9äöüß_-]+/gi, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || 'aufnahme';
+  const content = kind === 'transcript' ? (session.transcript || '') : (session.notes || '');
+  const suffix = kind === 'transcript' ? 'transkript' : 'notizen';
+
+  if (!content.trim()) {
+    showBanner(`${kind === 'transcript' ? 'Transkript' : 'Notizen'} sind leer.`, 'warning');
+    return;
+  }
+
+  let payload = content;
+  let mime = 'text/plain;charset=utf-8';
+  if (format === 'md') {
+    const title = kind === 'transcript' ? '# Transkript' : '# Notizen';
+    payload = `${title}\n\n${content.trim()}\n`;
+    mime = 'text/markdown;charset=utf-8';
+  } else if (format === 'json') {
+    payload = JSON.stringify({
+      id: session.id,
+      title: session.title,
+      createdAt: session.createdAt,
+      type: kind,
+      content,
+    }, null, 2);
+    mime = 'application/json;charset=utf-8';
+  }
+
+  downloadTextFile(`${slug}_${suffix}.${format}`, payload, mime);
+  showBanner(`✓ ${kind === 'transcript' ? 'Transkript' : 'Notizen'} exportiert`, 'success');
+}
+
+function downloadTextFile(filename, content, mimeType) {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 function startRename(id) {
