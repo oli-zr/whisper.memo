@@ -12,7 +12,7 @@ There is no backend, no build step, and no account setup.
 
 ## Features
 
-- Record audio in the browser (microphone or shared tab/system audio)
+- Record audio in the browser (microphone or shared tab/window/system audio)
 - Import existing audio files
 - Transcribe locally with Whisper (`small` or `medium`)
 - Keep transcripts and notes per session
@@ -27,7 +27,7 @@ PrivateScribe depends on the File System Access API, so it is intended for Chrom
 
 Safari is not supported.
 
-For laptop/system audio capture, your browser also needs `getDisplayMedia` audio sharing support. In Chromium browsers this typically means choosing a tab/window/screen in the share dialog and explicitly enabling the audio-sharing checkbox.
+For desktop/app audio capture, your browser also needs `getDisplayMedia` audio sharing support. In Chromium browsers this typically means choosing a tab, app window, or an entire screen in the share dialog and explicitly enabling the audio-sharing checkbox. Depending on the browser and operating system, app audio such as Zoom or a YouTube desktop app may only be available when sharing the corresponding window or the full screen.
 
 ## Running locally
 

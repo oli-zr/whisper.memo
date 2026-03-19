@@ -547,7 +547,7 @@ async function getMicrophoneStream() {
 
 async function getSystemAudioStream() {
   if (!navigator.mediaDevices?.getDisplayMedia) {
-    throw new Error('Dieser Browser unterstützt keine Aufnahme von Tab- oder System-Audio.');
+    throw new Error('Dieser Browser unterstützt keine Aufnahme von Fenster-, Bildschirm- oder System-Audio.');
   }
 
   const displayStream = await navigator.mediaDevices.getDisplayMedia({
@@ -558,15 +558,18 @@ async function getSystemAudioStream() {
       autoGainControl: false,
       suppressLocalAudioPlayback: false,
     },
-    preferCurrentTab: true,
+    preferCurrentTab: false,
     selfBrowserSurface: 'include',
+    surfaceSwitching: 'include',
+    monitorTypeSurfaces: 'include',
     systemAudio: 'include',
+    windowAudio: 'system',
   });
 
   const audioTracks = displayStream.getAudioTracks();
   if (audioTracks.length === 0) {
     displayStream.getTracks().forEach(track => track.stop());
-    throw new Error('Kein Audio erkannt. Bitte beim Teilen „Tab-Audio/Systemaudio teilen“ aktivieren.');
+    throw new Error('Kein Audio erkannt. Bitte beim Teilen „Audio teilen“ oder „Systemaudio teilen“ aktivieren und für Apps das richtige Fenster bzw. den Bildschirm auswählen.');
   }
 
   const audioStream = new MediaStream(audioTracks);
@@ -606,7 +609,7 @@ function setRecordingSource(source) {
   const hintEl = document.getElementById('record-source-hint');
   if (hintEl) {
     hintEl.textContent = S.recordingSource === 'system'
-      ? 'Browser fragt nach einem Tab/Fenster/Bildschirm. Aktiviere dort „Tab-Audio/Systemaudio teilen“, damit Ton mitgeschnitten wird.'
+      ? 'Browser fragt nach einem Tab, Fenster oder Bildschirm. Für YouTube-/Zoom-Apps wähle das jeweilige Fenster oder den ganzen Bildschirm und aktiviere dort „Audio teilen“ bzw. „Systemaudio teilen“.'
       : 'Mikrofonaufnahme mit Pegelanzeige.';
   }
 }
@@ -690,7 +693,7 @@ async function startRecording() {
   recLabelEl.textContent         = '● Aufnahme läuft…';
   recLabelEl.className           = 'recording';
   document.querySelector('.record-modal .modal-sub').textContent = S.recordingSource === 'system'
-    ? 'Teile einen Tab oder Bildschirm mit Audio und stoppe hier, wenn du fertig bist'
+    ? 'Teile ein Tab, Fenster oder den ganzen Bildschirm mit Audio und stoppe hier, wenn du fertig bist'
     : 'Drücke erneut zum Stoppen';
 
   recTimerInterval = setInterval(() => {
@@ -786,7 +789,7 @@ function showTitleInput() {
   recPhase.style.display = 'none';
   titlePhase.classList.add('visible');
   const now = new Date();
-  const prefix = S.recordingSource === 'system' ? 'System-Audio' : 'Aufnahme';
+  const prefix = S.recordingSource === 'system' ? 'App-/System-Audio' : 'Aufnahme';
   titleInput.value = `${prefix} ${now.toLocaleDateString('de-DE')} ${now.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}`;
   titleInput.focus();
   titleInput.select();
