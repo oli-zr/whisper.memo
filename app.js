@@ -378,21 +378,42 @@ async function openSession(id) {
 
 // ── Audio-Player ──────────────────────────────────────────────────────────────
 let audioObjectURL = null;
+let audioDurationFallback = 0;
 
 async function loadAudioPlayer(session) {
   const section = document.getElementById('audio-section');
-  if (!session?.hasAudio) { section.classList.add('hidden'); return; }
+  audioDurationFallback = 0;
+  resetAudioUI();
+  if (!session?.hasAudio) {
+    audioEl.pause();
+    audioEl.removeAttribute('src');
+    audioEl.load();
+    section.classList.add('hidden');
+    return;
+  }
 
   try {
     const dir  = await getSessionDir(session);
     const file = await readFileAsBlob(dir, 'audio.webm');
-    if (!file) { section.classList.add('hidden'); return; }
+    if (!file) {
+      audioEl.pause();
+      audioEl.removeAttribute('src');
+      audioEl.load();
+      section.classList.add('hidden');
+      return;
+    }
 
     if (audioObjectURL) URL.revokeObjectURL(audioObjectURL);
     audioObjectURL = URL.createObjectURL(file);
-    document.getElementById('hidden-audio').src = audioObjectURL;
+    audioDurationFallback = await getAudioDuration(file);
+    audioEl.pause();
+    audioEl.src = audioObjectURL;
+    audioEl.load();
+    updateAudioUI(0, getEffectiveAudioDuration());
     section.classList.remove('hidden');
   } catch {
+    audioDurationFallback = 0;
+    resetAudioUI();
     section.classList.add('hidden');
   }
 }
@@ -401,25 +422,88 @@ async function loadAudioPlayer(session) {
 const audioEl = document.getElementById('hidden-audio');
 const seekEl  = document.getElementById('audio-seek');
 const timeEl  = document.getElementById('audio-time');
+const currentTimeEl = document.getElementById('audio-current-time');
+const durationEl = document.getElementById('audio-duration');
 const playEl  = document.getElementById('btn-play-pause');
 
+function getEffectiveAudioDuration() {
+  return Number.isFinite(audioEl.duration) && audioEl.duration > 0
+    ? audioEl.duration
+    : audioDurationFallback;
+}
+
+function updateSeekBackground(progress) {
+  const pct = `${Math.min(100, Math.max(0, progress))}%`;
+  seekEl.style.setProperty('--seek-progress', pct);
+}
+
+function updateAudioUI(currentTime = 0, duration = 0) {
+  const safeDuration = Number.isFinite(duration) && duration > 0 ? duration : 0;
+  const safeCurrent = Math.min(Math.max(currentTime, 0), safeDuration || Math.max(currentTime, 0));
+  const progress = safeDuration > 0 ? (safeCurrent / safeDuration) * 100 : 0;
+  seekEl.value = progress;
+  updateSeekBackground(progress);
+  currentTimeEl.textContent = fmtTime(safeCurrent);
+  durationEl.textContent = fmtTime(safeDuration);
+  timeEl.textContent = `${fmtTime(safeCurrent)} / ${fmtTime(safeDuration)}`;
+}
+
+function resetAudioUI() {
+  playEl.textContent = '▶';
+  updateAudioUI(0, 0);
+}
+
+async function getAudioDuration(blob) {
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return 0;
+    const ctx = new AudioCtx();
+    try {
+      const buffer = await blob.arrayBuffer();
+      const decoded = await ctx.decodeAudioData(buffer.slice(0));
+      return Number.isFinite(decoded.duration) ? decoded.duration : 0;
+    } finally {
+      await ctx.close().catch(() => {});
+    }
+  } catch {
+    return 0;
+  }
+}
+
 audioEl.addEventListener('timeupdate', () => {
-  if (!audioEl.duration) return;
-  seekEl.value = (audioEl.currentTime / audioEl.duration) * 100;
-  timeEl.textContent = `${fmtTime(audioEl.currentTime)} / ${fmtTime(audioEl.duration)}`;
+  updateAudioUI(audioEl.currentTime, getEffectiveAudioDuration());
 });
 audioEl.addEventListener('loadedmetadata', () => {
-  timeEl.textContent = `0:00 / ${fmtTime(audioEl.duration)}`;
-  seekEl.value = 0;
+  updateAudioUI(0, getEffectiveAudioDuration());
 });
-audioEl.addEventListener('ended', () => { playEl.textContent = '▶'; });
+audioEl.addEventListener('durationchange', () => {
+  updateAudioUI(audioEl.currentTime, getEffectiveAudioDuration());
+});
+audioEl.addEventListener('play', () => { playEl.textContent = '⏸'; });
+audioEl.addEventListener('pause', () => { if (!audioEl.ended) playEl.textContent = '▶'; });
+audioEl.addEventListener('ended', () => {
+  playEl.textContent = '▶';
+  updateAudioUI(getEffectiveAudioDuration(), getEffectiveAudioDuration());
+});
 
-playEl.addEventListener('click', () => {
-  if (audioEl.paused) { audioEl.play(); playEl.textContent = '⏸'; }
-  else                { audioEl.pause(); playEl.textContent = '▶'; }
+playEl.addEventListener('click', async () => {
+  if (audioEl.paused) {
+    try {
+      await audioEl.play();
+    } catch {
+      showBanner('Audio konnte nicht abgespielt werden.', 'error');
+    }
+  } else {
+    audioEl.pause();
+  }
 });
 seekEl.addEventListener('input', () => {
-  audioEl.currentTime = (seekEl.value / 100) * (audioEl.duration || 0);
+  const duration = getEffectiveAudioDuration();
+  const nextTime = (Number(seekEl.value) / 100) * duration;
+  if (duration > 0) {
+    audioEl.currentTime = nextTime;
+    updateAudioUI(nextTime, duration);
+  }
 });
 
 document.getElementById('btn-delete-audio').addEventListener('click', () => {
@@ -432,7 +516,11 @@ document.getElementById('btn-delete-audio').addEventListener('click', () => {
       const dir = await getSessionDir(s);
       await deleteFile(dir, 'audio.webm');
       s.hasAudio = false;
-      audioEl.src = '';
+      audioEl.pause();
+      audioEl.removeAttribute('src');
+      audioEl.load();
+      audioDurationFallback = 0;
+      resetAudioUI();
       document.getElementById('audio-section').classList.add('hidden');
       await saveIndex();
       showBanner('🗑 Audiodatei gelöscht', 'info');
