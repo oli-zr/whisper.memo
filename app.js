@@ -22,6 +22,7 @@ const S = {
   sessionFilter: 'all',
   recording:  false,
   recordingSource: 'microphone',
+  notesPaneWidth: Number(localStorage.getItem('privatescribe-notes-width')) || null,
 };
 
 // Hilfsmethoden
@@ -267,12 +268,16 @@ function renderSidebar() {
 // ── Haupt-Bereich rendern ─────────────────────────────────────────────────────
 function renderMainArea() {
   const active = getActive();
+  const hasActive = !!active;
 
-  document.getElementById('empty-main').classList.toggle('hidden', !!active);
-  document.getElementById('transcript-col').classList.toggle('hidden', !active);
-  document.getElementById('notes-col').classList.toggle('hidden', !active);
+  document.getElementById('empty-main').classList.toggle('hidden', hasActive);
+  document.getElementById('transcript-col').classList.toggle('hidden', !hasActive);
+  document.getElementById('notes-col').classList.toggle('hidden', !hasActive);
+  document.getElementById('notes-resizer').classList.toggle('hidden', !hasActive);
 
   if (!active) return;
+
+  applyNotesPaneWidth();
 
   // Titel
   document.getElementById('session-title-input').value = active.title || '';
@@ -592,12 +597,25 @@ document.getElementById('session-title-input').addEventListener('change', async 
   await saveIndex();
 });
 
-// ── Transkript kopieren ───────────────────────────────────────────────────────
-document.getElementById('btn-copy').addEventListener('click', () => {
+// ── Kopieren / Exportieren ─────────────────────────────────────────────────────
+function copyActiveText(kind) {
   const s = getActive();
-  if (!s?.transcript) return;
-  navigator.clipboard.writeText(s.transcript)
-    .then(() => showBanner('✓ Transkript kopiert', 'success'));
+  if (!s) return;
+
+  const content = kind === 'notes' ? (s.notes || '') : (s.transcript || '');
+  if (!content.trim()) return;
+
+  const label = kind === 'notes' ? 'Notizen' : 'Transkript';
+  navigator.clipboard.writeText(content)
+    .then(() => showBanner(`✓ ${label} kopiert`, 'success'));
+}
+
+document.getElementById('btn-copy-transcript').addEventListener('click', () => {
+  copyActiveText('transcript');
+});
+
+document.getElementById('btn-copy-notes').addEventListener('click', () => {
+  copyActiveText('notes');
 });
 
 document.getElementById('btn-export-transcript').addEventListener('click', e => {
@@ -608,6 +626,90 @@ document.getElementById('btn-export-transcript').addEventListener('click', e => 
 document.getElementById('btn-export-notes').addEventListener('click', e => {
   e.stopPropagation();
   showExportMenu(e.currentTarget, 'notes');
+});
+
+const notesColEl = document.getElementById('notes-col');
+const notesResizerEl = document.getElementById('notes-resizer');
+
+function getSplitLayoutMetrics() {
+  const appEl = document.getElementById('app');
+  const appWidth = appEl.clientWidth;
+  const resizerWidth = notesResizerEl.offsetWidth || 12;
+  const transcriptMin = Number.parseInt(getComputedStyle(document.documentElement).getPropertyValue('--transcript-min-w'), 10) || 520;
+  const notesMin = Number.parseInt(getComputedStyle(document.documentElement).getPropertyValue('--notes-min-w'), 10) || 320;
+  const maxNotesWidth = Math.max(notesMin, appWidth - transcriptMin - resizerWidth);
+  return { appWidth, resizerWidth, transcriptMin, notesMin, maxNotesWidth };
+}
+
+function clampNotesPaneWidth(width) {
+  const { notesMin, maxNotesWidth } = getSplitLayoutMetrics();
+  if (maxNotesWidth <= notesMin) return Math.max(240, maxNotesWidth);
+  return Math.min(Math.max(width, notesMin), maxNotesWidth);
+}
+
+function setNotesPaneWidth(width, { persist = true } = {}) {
+  const clampedWidth = clampNotesPaneWidth(width);
+  S.notesPaneWidth = clampedWidth;
+  notesColEl.style.width = `${clampedWidth}px`;
+  notesColEl.style.flexBasis = `${clampedWidth}px`;
+  if (persist) localStorage.setItem('privatescribe-notes-width', String(Math.round(clampedWidth)));
+}
+
+function applyNotesPaneWidth() {
+  const defaultWidth = Number.parseInt(getComputedStyle(document.documentElement).getPropertyValue('--notes-w'), 10) || 360;
+  setNotesPaneWidth(S.notesPaneWidth || defaultWidth, { persist: false });
+}
+
+let resizeState = null;
+
+function stopNotesResize() {
+  if (!resizeState) return;
+  window.removeEventListener('pointermove', onNotesResizeMove);
+  window.removeEventListener('pointerup', stopNotesResize);
+  document.body.classList.remove('is-resizing');
+  document.body.style.cursor = '';
+  resizeState = null;
+}
+
+function onNotesResizeMove(event) {
+  if (!resizeState) return;
+  const delta = resizeState.startX - event.clientX;
+  setNotesPaneWidth(resizeState.startWidth + delta);
+}
+
+function startNotesResize(event) {
+  if (event.button !== 0) return;
+  const active = getActive();
+  if (!active) return;
+  event.preventDefault();
+  resizeState = { startX: event.clientX, startWidth: notesColEl.getBoundingClientRect().width };
+  document.body.classList.add('is-resizing');
+  document.body.style.cursor = 'col-resize';
+  window.addEventListener('pointermove', onNotesResizeMove);
+  window.addEventListener('pointerup', stopNotesResize);
+}
+
+notesResizerEl.addEventListener('pointerdown', startNotesResize);
+notesResizerEl.addEventListener('dblclick', () => {
+  const defaultWidth = Number.parseInt(getComputedStyle(document.documentElement).getPropertyValue('--notes-w'), 10) || 360;
+  setNotesPaneWidth(defaultWidth);
+});
+notesResizerEl.addEventListener('keydown', event => {
+  if (!getActive()) return;
+  if (!['ArrowLeft', 'ArrowRight', 'Home'].includes(event.key)) return;
+  event.preventDefault();
+  const current = notesColEl.getBoundingClientRect().width;
+  if (event.key === 'Home') {
+    const defaultWidth = Number.parseInt(getComputedStyle(document.documentElement).getPropertyValue('--notes-w'), 10) || 360;
+    setNotesPaneWidth(defaultWidth);
+    return;
+  }
+  const delta = event.key === 'ArrowLeft' ? -24 : 24;
+  setNotesPaneWidth(current + delta);
+});
+window.addEventListener('resize', () => {
+  if (!getActive()) return;
+  applyNotesPaneWidth();
 });
 
 // ── Retry ─────────────────────────────────────────────────────────────────────

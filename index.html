@@ -115,16 +115,12 @@
       <input id="session-title-input" type="text" placeholder="Sitzungstitel…" />
       <div id="header-right">
         <span id="status-badge" class="status-badge idle"></span>
-        <div class="header-actions" aria-label="Aktionen für Transkript und Notizen">
+        <div class="header-actions" aria-label="Aktionen für das Transkript">
           <button class="action-btn action-btn-secondary" id="btn-export-transcript" title="Transkript als .txt / .md / .json herunterladen">
             <span class="action-btn-icon" aria-hidden="true">↓</span>
-            Transkript
+            Download
           </button>
-          <button class="action-btn action-btn-secondary" id="btn-export-notes" title="Notizen als .txt / .md / .json herunterladen">
-            <span class="action-btn-icon" aria-hidden="true">↓</span>
-            Notizen
-          </button>
-          <button class="action-btn action-btn-primary" id="btn-copy" title="Transkript in die Zwischenablage kopieren">
+          <button class="action-btn action-btn-primary" id="btn-copy-transcript" title="Transkript in die Zwischenablage kopieren">
             <span class="action-btn-icon" aria-hidden="true">⎘</span>
             Kopieren
           </button>
@@ -163,11 +159,25 @@
     </div>
   </main>
 
+  <div id="notes-resizer" class="hidden" role="separator" aria-orientation="vertical" aria-label="Breite von Transkript und Notizen anpassen" tabindex="0"></div>
+
   <!-- NOTIZEN-SPALTE -->
   <aside id="notes-col" class="hidden">
     <div id="notes-header">
-      <h2>Notizen</h2>
-      <span id="notes-save-indicator"></span>
+      <div class="notes-heading-group">
+        <h2>Notizen</h2>
+        <span id="notes-save-indicator"></span>
+      </div>
+      <div class="header-actions notes-actions" aria-label="Aktionen für die Notizen">
+        <button class="action-btn action-btn-secondary" id="btn-export-notes" title="Notizen als .txt / .md / .json herunterladen">
+          <span class="action-btn-icon" aria-hidden="true">↓</span>
+          Download
+        </button>
+        <button class="action-btn action-btn-primary" id="btn-copy-notes" title="Notizen in die Zwischenablage kopieren">
+          <span class="action-btn-icon" aria-hidden="true">⎘</span>
+          Kopieren
+        </button>
+      </div>
     </div>
     <textarea id="notes-textarea" placeholder="Notizen zu dieser Sitzung…" spellcheck="true"></textarea>
   </aside>
