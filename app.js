@@ -4,12 +4,29 @@
  * Whisper läuft komplett lokal im Browser via WebAssembly.
  */
 import {
-  fsaSupported, restoreFolderHandle, dbGet, dbSet,
-  getOrCreateDir, writeFile, readFile, readFileAsBlob,
-  deleteFile, deleteDir,
+  fsaSupported, restoreFolderHandle, dbSet,
+  getOrCreateDir, writeFile, deleteFile, deleteDir,
 } from './storage.js';
 
 import { configureModelCache, transcribeAudio, warmUpWorker } from './transcribe.js';
+import {
+  isInProgressStatus,
+  getSessionAudioFilename,
+  esc,
+  fmtDate,
+  fmtTime,
+  fmtDuration,
+  slugifySessionTitle,
+} from './app-shared.js';
+import {
+  loadSessions,
+  saveSessionsIndex,
+  getSessionDir,
+  loadSessionContent,
+  createSessionRecord,
+  writeSessionMeta,
+  readSessionAudioBlob,
+} from './session-store.js';
 
 // ── App-Zustand ────────────────────────────────────────────────────────────────
 const S = {
@@ -25,108 +42,16 @@ const S = {
   notesPaneWidth: Number(localStorage.getItem('privatescribe-notes-width')) || null,
 };
 
-const INDEX_FILENAME = 'index.json';
-const INDEX_TEMP_FILENAME = 'index.json.tmp';
-const DEFAULT_AUDIO_FILENAME = 'audio.webm';
-
 // Hilfsmethoden
 const getActive = () => S.sessions.find(s => s.id === S.activeId) ?? null;
 const findById  = (id) => S.sessions.find(s => s.id === id) ?? null;
 
-function isInProgressStatus(status) {
-  return ['decoding', 'loading', 'transcribing'].includes(status);
-}
-
-function parseIndexData(raw) {
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return null;
-  }
-}
-
-function getSessionAudioFilename(session) {
-  return session?.audioFilename || DEFAULT_AUDIO_FILENAME;
-}
-
-function sanitizeExtension(extension) {
-  const normalized = extension.toLowerCase().replace(/[^a-z0-9]/g, '');
-  return normalized ? `.${normalized}` : '.webm';
-}
-
-function getExtensionFromMimeType(mimeType) {
-  if (!mimeType) return '.webm';
-  const normalized = mimeType.split(';', 1)[0].trim().toLowerCase();
-  const mimeToExt = {
-    'audio/webm': '.webm',
-    'audio/ogg': '.ogg',
-    'audio/wav': '.wav',
-    'audio/x-wav': '.wav',
-    'audio/wave': '.wav',
-    'audio/mpeg': '.mp3',
-    'audio/mp3': '.mp3',
-    'audio/mp4': '.m4a',
-    'audio/x-m4a': '.m4a',
-    'audio/aac': '.aac',
-    'audio/flac': '.flac',
-    'audio/x-flac': '.flac',
-  };
-  return mimeToExt[normalized] || '.webm';
-}
-
-function getAudioFilename(audioBlob) {
-  if (audioBlob instanceof File) {
-    const match = /\.[^.]+$/.exec(audioBlob.name);
-    if (match) return `audio${sanitizeExtension(match[0])}`;
-  }
-  return `audio${getExtensionFromMimeType(audioBlob.type)}`;
-}
-
-// ── Persistenz ────────────────────────────────────────────────────────────────
-async function loadIndex() {
-  const raw = await readFile(S.rootDir, INDEX_FILENAME);
-  const parsed = parseIndexData(raw);
-  if (parsed !== null) {
-    await deleteFile(S.rootDir, INDEX_TEMP_FILENAME);
-    return parsed;
-  }
-
-  const tempRaw = await readFile(S.rootDir, INDEX_TEMP_FILENAME);
-  const recovered = parseIndexData(tempRaw);
-  if (recovered !== null) {
-    await writeFile(S.rootDir, INDEX_FILENAME, tempRaw);
-    await deleteFile(S.rootDir, INDEX_TEMP_FILENAME);
-    console.warn('index.json war ungültig und wurde aus index.json.tmp wiederhergestellt.');
-    return recovered;
-  }
-
-  return [];
-}
-
 async function saveIndex() {
-  // Nur serialisierbare Felder speichern
-  const data = S.sessions.map(({ id, title, createdAt, dirName, transcriptStatus, hasAudio, audioFilename }) =>
-    ({ id, title, createdAt, dirName, transcriptStatus, hasAudio, audioFilename })
-  );
-  const serialized = JSON.stringify(data, null, 2);
-  await writeFile(S.rootDir, INDEX_TEMP_FILENAME, serialized);
-  await writeFile(S.rootDir, INDEX_FILENAME, serialized);
-  await deleteFile(S.rootDir, INDEX_TEMP_FILENAME);
+  await saveSessionsIndex(S.rootDir, S.sessions);
 }
 
-function sessionDirName(session) {
-  const date = new Date(session.createdAt).toISOString().slice(0, 10);
-  const slug  = (session.title || 'Unbenannt')
-    .replace(/[/\\:*?"<>|]/g, '-')
-    .replace(/\s+/g, '-')
-    .slice(0, 50);
-  return `${date}_${slug}`;
-}
-
-async function getSessionDir(session) {
-  return getOrCreateDir(S.rootDir, session.dirName);
+async function getDirForSession(session) {
+  return getSessionDir(S.rootDir, session);
 }
 
 async function ensureModelCacheDir() {
@@ -164,14 +89,7 @@ async function initApp() {
 
   await ensureModelCacheDir();
 
-  S.sessions = await loadIndex();
-  // Arbeitsspeicher-Felder initialisieren (nicht in index.json)
-  S.sessions.forEach(s => {
-    if (s.transcript === undefined) s.transcript = undefined; // lazy
-    if (s.notes      === undefined) s.notes      = undefined;
-    if (!s.downloadProgress)        s.downloadProgress = null;
-    if (s.hasAudio && !s.audioFilename) s.audioFilename = DEFAULT_AUDIO_FILENAME;
-  });
+  S.sessions = await loadSessions(S.rootDir);
 
   S.activeId = null;
   const searchEl = document.getElementById('session-search');
@@ -436,9 +354,7 @@ async function openSession(id) {
   // Transcript + Notizen lazy laden
   if (s.transcript === undefined) {
     try {
-      const dir   = await getSessionDir(s);
-      s.transcript = await readFile(dir, 'transcript.txt') ?? '';
-      s.notes      = await readFile(dir, 'notes.txt')      ?? '';
+      await loadSessionContent(S.rootDir, s);
     } catch {
       s.transcript = '';
       s.notes      = '';
@@ -467,8 +383,7 @@ async function loadAudioPlayer(session) {
   }
 
   try {
-    const dir  = await getSessionDir(session);
-    const file = await readFileAsBlob(dir, getSessionAudioFilename(session));
+    const file = await readSessionAudioBlob(S.rootDir, session);
     if (!file) {
       audioEl.pause();
       audioEl.removeAttribute('src');
@@ -617,10 +532,11 @@ document.getElementById('btn-delete-audio').addEventListener('click', () => {
     'Audiodatei löschen?',
     'Die Audiodatei wird dauerhaft gelöscht. Transkript und Notizen bleiben erhalten.',
     async () => {
-      const dir = await getSessionDir(s);
+      const dir = await getDirForSession(s);
       await deleteFile(dir, getSessionAudioFilename(s));
       s.hasAudio = false;
       delete s.audioFilename;
+      await writeSessionMeta(S.rootDir, s);
       audioEl.pause();
       audioEl.removeAttribute('src');
       audioEl.load();
@@ -646,7 +562,7 @@ document.getElementById('notes-textarea').addEventListener('input', e => {
   notesSaveTimer = setTimeout(async () => {
     try {
       s.notes = e.target.value;
-      const dir = await getSessionDir(s);
+      const dir = await getDirForSession(s);
       await writeFile(dir, 'notes.txt', s.notes);
       ind.textContent = 'Gespeichert ✓';
       ind.className   = 'saved';
@@ -663,6 +579,7 @@ document.getElementById('session-title-input').addEventListener('change', async 
   const s = getActive();
   if (!s) return;
   s.title = e.target.value.trim() || 'Unbenannte Aufnahme';
+  await writeSessionMeta(S.rootDir, s);
   renderSidebar();
   await saveIndex();
 });
@@ -786,8 +703,7 @@ window.addEventListener('resize', () => {
 document.getElementById('btn-retry').addEventListener('click', async () => {
   const s = getActive();
   if (!s) return;
-  const dir  = await getSessionDir(s);
-  const blob = await readFileAsBlob(dir, getSessionAudioFilename(s));
+  const blob = await readSessionAudioBlob(S.rootDir, s);
   if (!blob) { showBanner('Audiodatei nicht gefunden – kann nicht neu transkribieren.', 'error'); return; }
   runTranscription(s, blob);
 });
@@ -1102,35 +1018,12 @@ async function saveRecording() {
 
 // ── Session erstellen ─────────────────────────────────────────────────────────
 async function createSession(title, audioBlob) {
-  const id        = crypto.randomUUID();
-  const createdAt = new Date().toISOString();
-  const audioFilename = getAudioFilename(audioBlob);
-
-  const session = {
-    id,
-    title,
-    createdAt,
-    dirName:          sessionDirName({ title, createdAt }),
-    transcriptStatus: 'idle',
-    hasAudio:         true,
-    audioFilename,
-    transcript:       '',
-    notes:            '',
-    downloadProgress: null,
-  };
-
-  const dir = await getOrCreateDir(S.rootDir, session.dirName);
-  await writeFile(dir, audioFilename, audioBlob);
-  await writeFile(dir, 'transcript.txt', '');
-  await writeFile(dir, 'notes.txt', '');
-  await writeFile(dir, 'meta.json', JSON.stringify({
-    id, title, createdAt, transcriptStatus: 'idle', audioFilename
-  }, null, 2));
+  const session = await createSessionRecord(S.rootDir, title, audioBlob);
 
   S.sessions.unshift(session);
   await saveIndex();
 
-  S.activeId = id;
+  S.activeId = session.id;
   renderSidebar();
   renderMainArea();
 
@@ -1161,13 +1054,9 @@ async function runTranscription(session, audioBlob) {
     session.transcriptStatus = 'done';
     session.downloadProgress = null;
 
-    const dir = await getSessionDir(session);
+    const dir = await getDirForSession(session);
     await writeFile(dir, 'transcript.txt', text);
-    await writeFile(dir, 'meta.json', JSON.stringify({
-      id: session.id, title: session.title,
-      createdAt: session.createdAt, transcriptStatus: 'done', audioFilename: session.audioFilename
-    }, null, 2));
-
+    await writeSessionMeta(S.rootDir, session);
     await saveIndex();
     updateLiveStatus(session);
 
@@ -1178,6 +1067,7 @@ async function runTranscription(session, audioBlob) {
     console.error('Transkriptionsfehler:', err);
     session.transcriptStatus = 'error';
     session.downloadProgress = null;
+    await writeSessionMeta(S.rootDir, session);
     await saveIndex();
     updateLiveStatus(session);
     if (session.id === S.activeId) renderMainArea();
@@ -1336,8 +1226,7 @@ function showExportMenu(anchorEl, kind) {
 }
 
 function exportSessionField(session, kind, format) {
-  const base = session.title || 'aufnahme';
-  const slug = base.replace(/[^a-z0-9äöüß_-]+/gi, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || 'aufnahme';
+  const slug = slugifySessionTitle(session.title, 'aufnahme');
   const content = kind === 'transcript' ? (session.transcript || '') : (session.notes || '');
   const suffix = kind === 'transcript' ? 'transkript' : 'notizen';
 
@@ -1397,6 +1286,7 @@ function startRename(id) {
     if (S.activeId === id) {
       document.getElementById('session-title-input').value = newTitle;
     }
+    await writeSessionMeta(S.rootDir, s);
     await saveIndex();
     renderSidebar();
   };
@@ -1458,31 +1348,6 @@ function showBanner(msg, type = 'info', autoHide = true) {
 }
 
 // ── Hilfsfunktionen ───────────────────────────────────────────────────────────
-function esc(str) {
-  return String(str)
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
-    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
-function fmtDate(iso) {
-  return new Date(iso).toLocaleDateString('de-DE', {
-    day: '2-digit', month: 'short', year: 'numeric',
-  });
-}
-
-function fmtTime(s) {
-  if (!isFinite(s)) return '0:00';
-  const m = Math.floor(s / 60), sec = Math.floor(s % 60);
-  return `${m}:${String(sec).padStart(2, '0')}`;
-}
-
-function fmtDuration(ms) {
-  const h = Math.floor(ms / 3600000);
-  const m = Math.floor((ms % 3600000) / 60000);
-  const s = Math.floor((ms % 60000) / 1000);
-  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
-}
-
 // ── Start ─────────────────────────────────────────────────────────────────────
 boot().catch(err => {
   console.error('Boot-Fehler:', err);

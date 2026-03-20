@@ -48,7 +48,9 @@ If you prefer, any other static file server will do.
 ## How it works
 
 - `index.html` and `style.css` provide the UI
-- `app.js` handles recording, sessions, export, and the overall app flow
+- `app.js` coordinates the app flow, event wiring, and rendering
+- `app-shared.js` contains shared formatting, slug/file-name, and session helper utilities
+- `session-store.js` owns session/index persistence and `meta.json` updates
 - `transcribe.js` decodes audio and talks to the worker
 - `worker.js` runs Whisper through Transformers.js in a Web Worker
 - `storage.js` handles the File System Access API and IndexedDB
