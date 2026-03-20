@@ -25,6 +25,10 @@ const S = {
   notesPaneWidth: Number(localStorage.getItem('privatescribe-notes-width')) || null,
 };
 
+const INDEX_FILENAME = 'index.json';
+const INDEX_TEMP_FILENAME = 'index.json.tmp';
+const DEFAULT_AUDIO_FILENAME = 'audio.webm';
+
 // Hilfsmethoden
 const getActive = () => S.sessions.find(s => s.id === S.activeId) ?? null;
 const findById  = (id) => S.sessions.find(s => s.id === id) ?? null;
@@ -33,19 +37,83 @@ function isInProgressStatus(status) {
   return ['decoding', 'loading', 'transcribing'].includes(status);
 }
 
+function parseIndexData(raw) {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return null;
+  }
+}
+
+function getSessionAudioFilename(session) {
+  return session?.audioFilename || DEFAULT_AUDIO_FILENAME;
+}
+
+function sanitizeExtension(extension) {
+  const normalized = extension.toLowerCase().replace(/[^a-z0-9]/g, '');
+  return normalized ? `.${normalized}` : '.webm';
+}
+
+function getExtensionFromMimeType(mimeType) {
+  if (!mimeType) return '.webm';
+  const normalized = mimeType.split(';', 1)[0].trim().toLowerCase();
+  const mimeToExt = {
+    'audio/webm': '.webm',
+    'audio/ogg': '.ogg',
+    'audio/wav': '.wav',
+    'audio/x-wav': '.wav',
+    'audio/wave': '.wav',
+    'audio/mpeg': '.mp3',
+    'audio/mp3': '.mp3',
+    'audio/mp4': '.m4a',
+    'audio/x-m4a': '.m4a',
+    'audio/aac': '.aac',
+    'audio/flac': '.flac',
+    'audio/x-flac': '.flac',
+  };
+  return mimeToExt[normalized] || '.webm';
+}
+
+function getAudioFilename(audioBlob) {
+  if (audioBlob instanceof File) {
+    const match = /\.[^.]+$/.exec(audioBlob.name);
+    if (match) return `audio${sanitizeExtension(match[0])}`;
+  }
+  return `audio${getExtensionFromMimeType(audioBlob.type)}`;
+}
+
 // ── Persistenz ────────────────────────────────────────────────────────────────
 async function loadIndex() {
-  const raw = await readFile(S.rootDir, 'index.json');
-  if (!raw) return [];
-  try { return JSON.parse(raw); } catch { return []; }
+  const raw = await readFile(S.rootDir, INDEX_FILENAME);
+  const parsed = parseIndexData(raw);
+  if (parsed !== null) {
+    await deleteFile(S.rootDir, INDEX_TEMP_FILENAME);
+    return parsed;
+  }
+
+  const tempRaw = await readFile(S.rootDir, INDEX_TEMP_FILENAME);
+  const recovered = parseIndexData(tempRaw);
+  if (recovered !== null) {
+    await writeFile(S.rootDir, INDEX_FILENAME, tempRaw);
+    await deleteFile(S.rootDir, INDEX_TEMP_FILENAME);
+    console.warn('index.json war ungültig und wurde aus index.json.tmp wiederhergestellt.');
+    return recovered;
+  }
+
+  return [];
 }
 
 async function saveIndex() {
   // Nur serialisierbare Felder speichern
-  const data = S.sessions.map(({ id, title, createdAt, dirName, transcriptStatus, hasAudio }) =>
-    ({ id, title, createdAt, dirName, transcriptStatus, hasAudio })
+  const data = S.sessions.map(({ id, title, createdAt, dirName, transcriptStatus, hasAudio, audioFilename }) =>
+    ({ id, title, createdAt, dirName, transcriptStatus, hasAudio, audioFilename })
   );
-  await writeFile(S.rootDir, 'index.json', JSON.stringify(data, null, 2));
+  const serialized = JSON.stringify(data, null, 2);
+  await writeFile(S.rootDir, INDEX_TEMP_FILENAME, serialized);
+  await writeFile(S.rootDir, INDEX_FILENAME, serialized);
+  await deleteFile(S.rootDir, INDEX_TEMP_FILENAME);
 }
 
 function sessionDirName(session) {
@@ -102,6 +170,7 @@ async function initApp() {
     if (s.transcript === undefined) s.transcript = undefined; // lazy
     if (s.notes      === undefined) s.notes      = undefined;
     if (!s.downloadProgress)        s.downloadProgress = null;
+    if (s.hasAudio && !s.audioFilename) s.audioFilename = DEFAULT_AUDIO_FILENAME;
   });
 
   S.activeId = null;
@@ -399,7 +468,7 @@ async function loadAudioPlayer(session) {
 
   try {
     const dir  = await getSessionDir(session);
-    const file = await readFileAsBlob(dir, 'audio.webm');
+    const file = await readFileAsBlob(dir, getSessionAudioFilename(session));
     if (!file) {
       audioEl.pause();
       audioEl.removeAttribute('src');
@@ -549,8 +618,9 @@ document.getElementById('btn-delete-audio').addEventListener('click', () => {
     'Die Audiodatei wird dauerhaft gelöscht. Transkript und Notizen bleiben erhalten.',
     async () => {
       const dir = await getSessionDir(s);
-      await deleteFile(dir, 'audio.webm');
+      await deleteFile(dir, getSessionAudioFilename(s));
       s.hasAudio = false;
+      delete s.audioFilename;
       audioEl.pause();
       audioEl.removeAttribute('src');
       audioEl.load();
@@ -717,7 +787,7 @@ document.getElementById('btn-retry').addEventListener('click', async () => {
   const s = getActive();
   if (!s) return;
   const dir  = await getSessionDir(s);
-  const blob = await readFileAsBlob(dir, 'audio.webm');
+  const blob = await readFileAsBlob(dir, getSessionAudioFilename(s));
   if (!blob) { showBanner('Audiodatei nicht gefunden – kann nicht neu transkribieren.', 'error'); return; }
   runTranscription(s, blob);
 });
@@ -1034,6 +1104,7 @@ async function saveRecording() {
 async function createSession(title, audioBlob) {
   const id        = crypto.randomUUID();
   const createdAt = new Date().toISOString();
+  const audioFilename = getAudioFilename(audioBlob);
 
   const session = {
     id,
@@ -1042,17 +1113,18 @@ async function createSession(title, audioBlob) {
     dirName:          sessionDirName({ title, createdAt }),
     transcriptStatus: 'idle',
     hasAudio:         true,
+    audioFilename,
     transcript:       '',
     notes:            '',
     downloadProgress: null,
   };
 
   const dir = await getOrCreateDir(S.rootDir, session.dirName);
-  await writeFile(dir, 'audio.webm', audioBlob);
+  await writeFile(dir, audioFilename, audioBlob);
   await writeFile(dir, 'transcript.txt', '');
   await writeFile(dir, 'notes.txt', '');
   await writeFile(dir, 'meta.json', JSON.stringify({
-    id, title, createdAt, transcriptStatus: 'idle'
+    id, title, createdAt, transcriptStatus: 'idle', audioFilename
   }, null, 2));
 
   S.sessions.unshift(session);
@@ -1093,7 +1165,7 @@ async function runTranscription(session, audioBlob) {
     await writeFile(dir, 'transcript.txt', text);
     await writeFile(dir, 'meta.json', JSON.stringify({
       id: session.id, title: session.title,
-      createdAt: session.createdAt, transcriptStatus: 'done'
+      createdAt: session.createdAt, transcriptStatus: 'done', audioFilename: session.audioFilename
     }, null, 2));
 
     await saveIndex();

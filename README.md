@@ -61,8 +61,9 @@ PrivateScribe stores data in two places:
 
 1. **Your chosen working folder**
    - `index.json`
+   - during saves, a short-lived recovery file `index.json.tmp`
    - one folder per session
-   - session files such as `audio.webm`, `transcript.txt`, `notes.txt`, and `meta.json`
+   - session files such as `audio.webm`, `audio.mp3`, `audio.wav`, `transcript.txt`, `notes.txt`, and `meta.json`
 
 2. **IndexedDB in the browser**
    - stores the handle to the selected working folder so the app can restore it later
