@@ -1193,25 +1193,51 @@ document.addEventListener('click', () => {
 });
 
 // ── Kontext-Menü ──────────────────────────────────────────────────────────────
+function buildMenuButtons(menu, items) {
+  menu.replaceChildren();
+
+  items.forEach(item => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `ctx-item${item.danger ? ' danger' : ''}`;
+
+    Object.entries(item.dataset || {}).forEach(([key, value]) => {
+      button.dataset[key] = value;
+    });
+
+    button.textContent = item.label;
+    button.addEventListener('click', item.onClick);
+    menu.appendChild(button);
+  });
+}
+
 function showContextMenu(x, y, sessionId) {
   const menu = document.getElementById('context-menu');
-  menu.innerHTML = `
-    <button class="ctx-item" data-action="rename">✏️ Umbenennen</button>
-    <button class="ctx-item danger" data-action="delete">🗑 Löschen</button>
-  `;
+  buildMenuButtons(menu, [
+    {
+      label: '✏️ Umbenennen',
+      dataset: { action: 'rename' },
+      onClick: () => {
+        menu.classList.add('hidden');
+        startRename(sessionId);
+      },
+    },
+    {
+      label: '🗑 Löschen',
+      dataset: { action: 'delete' },
+      danger: true,
+      onClick: () => {
+        menu.classList.add('hidden');
+        confirmDeleteSession(sessionId);
+      },
+    },
+  ]);
+
   const mx = Math.min(x, window.innerWidth  - 180);
   const my = Math.min(y, window.innerHeight - 90);
   menu.style.left = mx + 'px';
   menu.style.top  = my + 'px';
   menu.classList.remove('hidden');
-
-  menu.querySelectorAll('.ctx-item').forEach(btn => {
-    btn.addEventListener('click', () => {
-      menu.classList.add('hidden');
-      if (btn.dataset.action === 'rename') startRename(sessionId);
-      else                                 confirmDeleteSession(sessionId);
-    });
-  });
 }
 
 function showExportMenu(anchorEl, kind) {
@@ -1220,23 +1246,21 @@ function showExportMenu(anchorEl, kind) {
 
   const menu = document.getElementById('export-menu');
   const label = kind === 'transcript' ? 'Transkript' : 'Notizen';
-  menu.innerHTML = `
-    <button class="ctx-item" data-format="txt">${label} als .txt</button>
-    <button class="ctx-item" data-format="md">${label} als .md</button>
-    <button class="ctx-item" data-format="json">${label} als .json</button>
-  `;
+  const formats = ['txt', 'md', 'json'];
+
+  buildMenuButtons(menu, formats.map(format => ({
+    label: `${label} als .${format}`,
+    dataset: { format },
+    onClick: () => {
+      menu.classList.add('hidden');
+      exportSessionField(s, kind, format);
+    },
+  })));
 
   const rect = anchorEl.getBoundingClientRect();
   menu.style.left = Math.min(rect.left, window.innerWidth - 210) + 'px';
   menu.style.top = Math.min(rect.bottom + 8, window.innerHeight - 130) + 'px';
   menu.classList.remove('hidden');
-
-  menu.querySelectorAll('.ctx-item').forEach(btn => {
-    btn.addEventListener('click', () => {
-      menu.classList.add('hidden');
-      exportSessionField(s, kind, btn.dataset.format);
-    });
-  });
 }
 
 function exportSessionField(session, kind, format) {
