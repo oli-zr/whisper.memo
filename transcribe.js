@@ -74,6 +74,7 @@ export async function decodeAudioToFloat32(blob) {
  * @param {'small'|'medium'} modelSize
  * @param {FileSystemDirectoryHandle | null} rootDirHandle
  * @param {function} onStatus    - (status: string, extra?: object) => void
+ * @param {string}   language    - z.B. 'german', 'english', 'auto'
  *   Mögliche Status-Werte:
  *     'decoding'    – Audio wird dekodiert
  *     'loading'     – Whisper-Modell lädt (inkl. Download beim 1. Mal)
@@ -83,7 +84,7 @@ export async function decodeAudioToFloat32(blob) {
  *
  * @returns {Promise<string>} Transkriptions-Text
  */
-export function transcribeAudio(audioBlob, modelSize, rootDirHandle, onStatus) {
+export function transcribeAudio(audioBlob, modelSize, rootDirHandle, onStatus, language = 'german') {
   return new Promise(async (resolve, reject) => {
     let w;
 
@@ -125,7 +126,7 @@ export function transcribeAudio(audioBlob, modelSize, rootDirHandle, onStatus) {
       // Das vermeidet Struktur-/Typ-Probleme beim structured clone.
       const transferBuffer = audioData.buffer;
       w.postMessage(
-        { type: 'transcribe', audioBuffer: transferBuffer, sampleRate: 16000, modelSize, rootDirHandle },
+        { type: 'transcribe', audioBuffer: transferBuffer, sampleRate: 16000, modelSize, rootDirHandle, language },
         [transferBuffer]
       );
 

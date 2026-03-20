@@ -92,6 +92,26 @@
         <span class="model-selector-arrow">▲</span>
       </button>
 
+      <!-- Sprach-Selektor -->
+      <div class="language-selector-wrap">
+        <span class="model-selector-label">Sprache</span>
+        <select id="language-select" class="language-select" aria-label="Transkriptions-Sprache wählen">
+          <option value="german">Deutsch</option>
+          <option value="english">English</option>
+          <option value="french">Français</option>
+          <option value="spanish">Español</option>
+          <option value="italian">Italiano</option>
+          <option value="portuguese">Português</option>
+          <option value="dutch">Nederlands</option>
+          <option value="polish">Polski</option>
+          <option value="russian">Русский</option>
+          <option value="chinese">中文</option>
+          <option value="japanese">日本語</option>
+          <option value="korean">한국어</option>
+          <option value="auto">Auto-Erkennung</option>
+        </select>
+      </div>
+
       <button class="sidebar-action-btn" id="btn-change-folder">
         📁 Ordner wechseln
       </button>
@@ -116,6 +136,14 @@
       <div id="header-right">
         <span id="status-badge" class="status-badge idle"></span>
         <div class="header-actions" aria-label="Aktionen für das Transkript">
+          <button class="action-btn action-btn-ghost" id="btn-edit-transcript" title="Transkript bearbeiten">
+            <span class="action-btn-icon" aria-hidden="true">✎</span>
+            Bearbeiten
+          </button>
+          <button class="action-btn action-btn-secondary" id="btn-search-transcript" title="Im Transkript suchen (Strg+F)">
+            <span class="action-btn-icon" aria-hidden="true">⌕</span>
+            Suchen
+          </button>
           <button class="action-btn action-btn-secondary" id="btn-export-transcript" title="Transkript als .txt / .md / .json herunterladen">
             <span class="action-btn-icon" aria-hidden="true">↓</span>
             Download
@@ -126,6 +154,15 @@
           </button>
         </div>
       </div>
+    </div>
+
+    <!-- Transkript-Suchleiste -->
+    <div id="transcript-search-bar" class="hidden">
+      <input id="transcript-search-input" type="search" placeholder="Im Transkript suchen…" autocomplete="off">
+      <span id="transcript-search-counter" class="search-counter"></span>
+      <button id="transcript-search-prev" title="Vorheriger Treffer">↑</button>
+      <button id="transcript-search-next" title="Nächster Treffer">↓</button>
+      <button id="transcript-search-close" title="Suche schließen">✕</button>
     </div>
 
     <div id="transcript-body">
@@ -143,7 +180,8 @@
     <!-- Audio-Player -->
     <div id="audio-section" class="hidden">
       <div id="audio-player-row">
-        <button id="btn-play-pause" title="Abspielen/Pause">▶</button>
+        <button id="btn-play-pause" title="Abspielen/Pause" aria-label="Abspielen">▶</button>
+        <button id="btn-skip-back" class="skip-btn" title="10 Sekunden zurück" aria-label="10s zurück">−10</button>
         <div id="audio-progress-wrap">
           <div id="audio-time-row">
             <span id="audio-current-time">0:00</span>
@@ -152,6 +190,8 @@
           </div>
           <input id="audio-seek" type="range" min="0" max="100" value="0" step="0.1">
         </div>
+        <button id="btn-skip-fwd" class="skip-btn" title="10 Sekunden vor" aria-label="10s vor">+10</button>
+        <button id="btn-speed" class="speed-btn" title="Wiedergabegeschwindigkeit">1×</button>
       </div>
       <div id="audio-footer">
         <button id="btn-delete-audio">🗑 Audiodatei löschen</button>
@@ -207,6 +247,12 @@
     </div>
 
     <div id="record-source-hint" class="record-source-hint">Mikrofonaufnahme mit Pegelanzeige.</div>
+
+    <!-- Mikrofon-Auswahl (nur sichtbar wenn mehrere Mikrofone verfügbar) -->
+    <div id="mic-select-wrap" class="mic-select-wrap hidden">
+      <label for="mic-select" class="mic-select-label">Mikrofon</label>
+      <select id="mic-select" class="mic-select"></select>
+    </div>
 
     <div id="record-phase">
       <button id="btn-record">⏺</button>

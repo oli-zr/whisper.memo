@@ -17,6 +17,7 @@ const S = {
   sessions:   [],         // Array<SessionObj>
   activeId:   null,       // string | null
   modelSize:  'small',    // 'small' | 'medium'
+  language:   'german',   // whisper language code or 'auto'
   theme:      'dark',     // 'dark' | 'light'
   searchQuery: '',
   sessionFilter: 'all',
@@ -35,17 +36,32 @@ function isInProgressStatus(status) {
 
 // ── Persistenz ────────────────────────────────────────────────────────────────
 async function loadIndex() {
-  const raw = await readFile(S.rootDir, 'index.json');
-  if (!raw) return [];
-  try { return JSON.parse(raw); } catch { return []; }
+  // Versuche zuerst Hauptdatei, dann Temp-Backup (Schutz gegen Korruption)
+  for (const filename of ['index.json', 'index.json.tmp']) {
+    const raw = await readFile(S.rootDir, filename);
+    if (!raw) continue;
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    } catch {}
+  }
+  return [];
 }
 
 async function saveIndex() {
   // Nur serialisierbare Felder speichern
-  const data = S.sessions.map(({ id, title, createdAt, dirName, transcriptStatus, hasAudio }) =>
-    ({ id, title, createdAt, dirName, transcriptStatus, hasAudio })
+  const data = S.sessions.map(({ id, title, createdAt, dirName, transcriptStatus, hasAudio, audioFile }) =>
+    ({ id, title, createdAt, dirName, transcriptStatus, hasAudio, audioFile: audioFile || 'audio.webm' })
   );
-  await writeFile(S.rootDir, 'index.json', JSON.stringify(data, null, 2));
+  const json = JSON.stringify(data, null, 2);
+  // Atomares Schreiben: erst Temp, dann Ziel überschreiben
+  try {
+    await writeFile(S.rootDir, 'index.json.tmp', json);
+    await writeFile(S.rootDir, 'index.json', json);
+    await deleteFile(S.rootDir, 'index.json.tmp');
+  } catch {
+    await writeFile(S.rootDir, 'index.json', json);
+  }
 }
 
 function sessionDirName(session) {
@@ -71,6 +87,7 @@ async function ensureModelCacheDir() {
 async function boot() {
   // Präferenzen laden
   S.modelSize = localStorage.getItem('privatescribe-model') || 'small';
+  S.language  = localStorage.getItem('privatescribe-language') || 'german';
   S.theme = localStorage.getItem('privatescribe-theme') || 'dark';
   applyTheme();
 
@@ -113,6 +130,10 @@ async function initApp() {
   renderMainArea();
   updateModelSelector();
   updateThemeToggle();
+
+  // Sprach-Selektor synchronisieren
+  const langSel = document.getElementById('language-select');
+  if (langSel) langSel.value = S.language;
 
   // Worker vorladen (damit erstes Transkribieren schneller startet)
   await warmUpWorker(S.rootDir);
@@ -174,6 +195,21 @@ async function chooseFolder() {
 }
 
 document.getElementById('btn-theme-toggle').addEventListener('click', toggleTheme);
+
+// Sprach-Selektor
+const langSelect = document.getElementById('language-select');
+if (langSelect) {
+  langSelect.value = S.language;
+  langSelect.addEventListener('change', () => {
+    S.language = langSelect.value;
+    localStorage.setItem('privatescribe-language', S.language);
+    const label = langSelect.options[langSelect.selectedIndex]?.text || S.language;
+    showBanner(`Sprache: ${label}`, 'info');
+  });
+}
+
+// Suchen-Button im Header
+document.getElementById('btn-search-transcript')?.addEventListener('click', openTranscriptSearch);
 document.getElementById('session-search').addEventListener('input', e => {
   S.searchQuery = e.target.value || '';
   renderSidebar();
@@ -294,7 +330,7 @@ function renderMainArea() {
   const retryEl    = document.getElementById('btn-retry');
 
   if (active.transcript) {
-    textEl.textContent = active.transcript;
+    renderTranscriptContent(active.transcript);
     emptyEl.classList.add('hidden');
     retryEl.classList.add('hidden');
   } else if (active.transcriptStatus === 'error') {
@@ -377,6 +413,16 @@ async function openSession(id) {
   }
 
   S.activeId = id;
+  // Edit-Mode und Suche beim Session-Wechsel zurücksetzen
+  if (transcriptEditMode) {
+    transcriptEditMode = false;
+    const textEl = document.getElementById('transcript-text');
+    textEl.contentEditable = 'false';
+    textEl.classList.remove('transcript-editable');
+    const editBtn = document.getElementById('btn-edit-transcript');
+    if (editBtn) { editBtn.textContent = '✎ Bearbeiten'; editBtn.classList.remove('editing'); }
+  }
+  closeTranscriptSearch();
   renderSidebar();
   renderMainArea();
 }
@@ -399,7 +445,7 @@ async function loadAudioPlayer(session) {
 
   try {
     const dir  = await getSessionDir(session);
-    const file = await readFileAsBlob(dir, 'audio.webm');
+    const file = await readFileAsBlob(dir, session.audioFile || 'audio.webm');
     if (!file) {
       audioEl.pause();
       audioEl.removeAttribute('src');
@@ -455,7 +501,13 @@ function updateAudioUI(currentTime = 0, duration = 0) {
 
 function resetAudioUI() {
   playEl.textContent = '▶';
+  playEl.setAttribute('aria-label', 'Abspielen');
   updateAudioUI(0, 0);
+  // Geschwindigkeit zurücksetzen
+  currentSpeedIdx = 1;
+  audioEl.playbackRate = 1;
+  const speedBtn = document.getElementById('btn-speed');
+  if (speedBtn) speedBtn.textContent = '1×';
 }
 
 async function getAudioDuration(blob) {
@@ -514,8 +566,8 @@ audioEl.addEventListener('loadedmetadata', () => {
 audioEl.addEventListener('durationchange', () => {
   updateAudioUI(audioEl.currentTime, getEffectiveAudioDuration());
 });
-audioEl.addEventListener('play', () => { playEl.textContent = '⏸'; });
-audioEl.addEventListener('pause', () => { if (!audioEl.ended) playEl.textContent = '▶'; });
+audioEl.addEventListener('play', () => { playEl.textContent = '⏸'; playEl.setAttribute('aria-label', 'Pause'); });
+audioEl.addEventListener('pause', () => { if (!audioEl.ended) { playEl.textContent = '▶'; playEl.setAttribute('aria-label', 'Abspielen'); } });
 audioEl.addEventListener('ended', () => {
   playEl.textContent = '▶';
   updateAudioUI(getEffectiveAudioDuration(), getEffectiveAudioDuration());
@@ -541,6 +593,23 @@ seekEl.addEventListener('input', () => {
   }
 });
 
+// ── Geschwindigkeit & Skip ────────────────────────────────────────────────────
+const SPEEDS = [0.75, 1, 1.25, 1.5, 2];
+let currentSpeedIdx = 1; // default 1x
+
+document.getElementById('btn-skip-back').addEventListener('click', () => {
+  audioEl.currentTime = Math.max(0, audioEl.currentTime - 10);
+});
+document.getElementById('btn-skip-fwd').addEventListener('click', () => {
+  audioEl.currentTime = Math.min(getEffectiveAudioDuration(), audioEl.currentTime + 10);
+});
+document.getElementById('btn-speed').addEventListener('click', () => {
+  currentSpeedIdx = (currentSpeedIdx + 1) % SPEEDS.length;
+  const speed = SPEEDS[currentSpeedIdx];
+  audioEl.playbackRate = speed;
+  document.getElementById('btn-speed').textContent = speed === 1 ? '1×' : `${speed}×`;
+});
+
 document.getElementById('btn-delete-audio').addEventListener('click', () => {
   const s = getActive();
   if (!s) return;
@@ -549,7 +618,7 @@ document.getElementById('btn-delete-audio').addEventListener('click', () => {
     'Die Audiodatei wird dauerhaft gelöscht. Transkript und Notizen bleiben erhalten.',
     async () => {
       const dir = await getSessionDir(s);
-      await deleteFile(dir, 'audio.webm');
+      await deleteFile(dir, s.audioFile || 'audio.webm');
       s.hasAudio = false;
       audioEl.pause();
       audioEl.removeAttribute('src');
@@ -622,6 +691,180 @@ document.getElementById('btn-export-transcript').addEventListener('click', e => 
   e.stopPropagation();
   showExportMenu(e.currentTarget, 'transcript');
 });
+
+// ── Transkript-Suche ──────────────────────────────────────────────────────────
+let transcriptSearchQuery = '';
+let transcriptSearchMatches = [];
+let transcriptSearchIdx = 0;
+
+function renderTranscriptContent(text) {
+  const textEl = document.getElementById('transcript-text');
+  if (!transcriptSearchQuery) {
+    textEl.textContent = text;
+    return;
+  }
+  // Highlights mit Mark-Tags
+  const escaped = transcriptSearchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const parts = text.split(new RegExp(`(${escaped})`, 'gi'));
+  textEl.innerHTML = '';
+  transcriptSearchMatches = [];
+  parts.forEach(part => {
+    if (part.toLowerCase() === transcriptSearchQuery.toLowerCase()) {
+      const mark = document.createElement('mark');
+      mark.className = 'transcript-highlight';
+      mark.textContent = part;
+      transcriptSearchMatches.push(mark);
+      textEl.appendChild(mark);
+    } else {
+      textEl.appendChild(document.createTextNode(part));
+    }
+  });
+  highlightActive();
+}
+
+function highlightActive() {
+  transcriptSearchMatches.forEach((m, i) => {
+    m.classList.toggle('transcript-highlight-active', i === transcriptSearchIdx);
+  });
+  if (transcriptSearchMatches[transcriptSearchIdx]) {
+    transcriptSearchMatches[transcriptSearchIdx].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+  const counter = document.getElementById('transcript-search-counter');
+  if (counter) {
+    counter.textContent = transcriptSearchMatches.length
+      ? `${transcriptSearchIdx + 1} / ${transcriptSearchMatches.length}`
+      : 'Keine Treffer';
+  }
+}
+
+function openTranscriptSearch() {
+  const bar = document.getElementById('transcript-search-bar');
+  if (!bar) return;
+  bar.classList.remove('hidden');
+  const inp = document.getElementById('transcript-search-input');
+  inp.value = transcriptSearchQuery;
+  inp.focus(); inp.select();
+}
+
+function closeTranscriptSearch() {
+  const bar = document.getElementById('transcript-search-bar');
+  if (bar) bar.classList.add('hidden');
+  transcriptSearchQuery = '';
+  transcriptSearchMatches = [];
+  transcriptSearchIdx = 0;
+  const s = getActive();
+  if (s?.transcript) {
+    document.getElementById('transcript-text').textContent = s.transcript;
+  }
+}
+
+document.addEventListener('keydown', e => {
+  const active = getActive();
+  if (!active?.transcript) return;
+  if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
+    const transcriptCol = document.getElementById('transcript-col');
+    if (!transcriptCol.classList.contains('hidden')) {
+      e.preventDefault();
+      openTranscriptSearch();
+    }
+  }
+  if (e.key === 'Escape') {
+    closeTranscriptSearch();
+  }
+});
+
+// Suche-Toolbar-Events (werden nach DOM-Ready registriert)
+function initTranscriptSearchBar() {
+  const inp  = document.getElementById('transcript-search-input');
+  const prev = document.getElementById('transcript-search-prev');
+  const next = document.getElementById('transcript-search-next');
+  const close = document.getElementById('transcript-search-close');
+  if (!inp) return;
+
+  inp.addEventListener('input', () => {
+    transcriptSearchQuery = inp.value;
+    transcriptSearchIdx = 0;
+    const s = getActive();
+    if (s?.transcript) renderTranscriptContent(s.transcript);
+  });
+  inp.addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (e.shiftKey) {
+        transcriptSearchIdx = (transcriptSearchIdx - 1 + transcriptSearchMatches.length) % transcriptSearchMatches.length || 0;
+      } else {
+        transcriptSearchIdx = (transcriptSearchIdx + 1) % transcriptSearchMatches.length || 0;
+      }
+      highlightActive();
+    }
+    if (e.key === 'Escape') closeTranscriptSearch();
+  });
+  prev?.addEventListener('click', () => {
+    if (!transcriptSearchMatches.length) return;
+    transcriptSearchIdx = (transcriptSearchIdx - 1 + transcriptSearchMatches.length) % transcriptSearchMatches.length;
+    highlightActive();
+  });
+  next?.addEventListener('click', () => {
+    if (!transcriptSearchMatches.length) return;
+    transcriptSearchIdx = (transcriptSearchIdx + 1) % transcriptSearchMatches.length;
+    highlightActive();
+  });
+  close?.addEventListener('click', closeTranscriptSearch);
+}
+
+// ── Transkript-Editierung ─────────────────────────────────────────────────────
+let transcriptEditMode = false;
+
+function enterTranscriptEditMode() {
+  const s = getActive();
+  if (!s?.transcript) return;
+  transcriptEditMode = true;
+  const textEl = document.getElementById('transcript-text');
+  textEl.contentEditable = 'true';
+  textEl.classList.add('transcript-editable');
+  textEl.focus();
+  // Cursor ans Ende
+  const range = document.createRange();
+  range.selectNodeContents(textEl);
+  range.collapse(false);
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+  document.getElementById('btn-edit-transcript').textContent = '✓ Fertig';
+  document.getElementById('btn-edit-transcript').classList.add('editing');
+  closeTranscriptSearch();
+}
+
+async function exitTranscriptEditMode() {
+  const s = getActive();
+  if (!s) return;
+  transcriptEditMode = false;
+  const textEl = document.getElementById('transcript-text');
+  const newText = textEl.innerText || textEl.textContent || '';
+  textEl.contentEditable = 'false';
+  textEl.classList.remove('transcript-editable');
+  document.getElementById('btn-edit-transcript').textContent = '✎ Bearbeiten';
+  document.getElementById('btn-edit-transcript').classList.remove('editing');
+
+  if (newText !== s.transcript) {
+    s.transcript = newText;
+    const dir = await getSessionDir(s);
+    await writeFile(dir, 'transcript.txt', newText);
+    showBanner('✓ Transkript gespeichert', 'success');
+  }
+}
+
+function initEditTranscriptBtn() {
+  const btn = document.getElementById('btn-edit-transcript');
+  if (!btn) return;
+  btn.addEventListener('click', () => {
+    if (transcriptEditMode) exitTranscriptEditMode();
+    else                    enterTranscriptEditMode();
+  });
+}
+
+initTranscriptSearchBar();
+initEditTranscriptBtn();
 
 document.getElementById('btn-export-notes').addEventListener('click', e => {
   e.stopPropagation();
@@ -717,7 +960,7 @@ document.getElementById('btn-retry').addEventListener('click', async () => {
   const s = getActive();
   if (!s) return;
   const dir  = await getSessionDir(s);
-  const blob = await readFileAsBlob(dir, 'audio.webm');
+  const blob = await readFileAsBlob(dir, s.audioFile || 'audio.webm');
   if (!blob) { showBanner('Audiodatei nicht gefunden – kann nicht neu transkribieren.', 'error'); return; }
   runTranscription(s, blob);
 });
@@ -752,9 +995,43 @@ const RECORDING_MIME_CANDIDATES = [
 ];
 const RECORDING_AUDIO_BITS_PER_SECOND = 24000;
 
+// Verfügbare Mikrofone laden
+let availableMics = [];
+
+async function loadMicDevices() {
+  try {
+    // Erst kurz Permission holen, damit deviceId sichtbar wird
+    const tmp = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    tmp.getTracks().forEach(t => t.stop());
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    availableMics = devices.filter(d => d.kind === 'audioinput');
+    renderMicSelector();
+  } catch {
+    availableMics = [];
+  }
+}
+
+function renderMicSelector() {
+  const wrap = document.getElementById('mic-select-wrap');
+  if (!wrap) return;
+  if (availableMics.length <= 1) { wrap.classList.add('hidden'); return; }
+  wrap.classList.remove('hidden');
+  const sel = document.getElementById('mic-select');
+  sel.innerHTML = '';
+  availableMics.forEach(d => {
+    const opt = document.createElement('option');
+    opt.value = d.deviceId;
+    opt.textContent = d.label || `Mikrofon ${d.deviceId.slice(0,6)}`;
+    sel.appendChild(opt);
+  });
+}
+
 async function getMicrophoneStream() {
+  const sel = document.getElementById('mic-select');
+  const deviceId = sel?.value && sel.value !== 'default' ? sel.value : undefined;
   return navigator.mediaDevices.getUserMedia({
     audio: {
+      ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
       channelCount: 1,
       sampleRate: 16000,
       echoCancellation: true,
@@ -771,7 +1048,7 @@ async function getSystemAudioStream() {
   }
 
   const displayStream = await navigator.mediaDevices.getDisplayMedia({
-    video: true,
+    video: { width: 1, height: 1 }, // Minimal-Video nötig für getDisplayMedia-API, wird sofort gestoppt
     audio: {
       echoCancellation: false,
       noiseSuppression: false,
@@ -849,6 +1126,8 @@ function openRecordModal() {
   setRecordingSource(S.recordingSource);
   syncRecordingSourceControls();
   modalOverlay.classList.remove('hidden');
+  // Mikrofon-Liste laden (nur wenn Mikrofon-Quelle aktiv)
+  if (S.recordingSource === 'microphone') loadMicDevices();
 }
 
 function closeRecordModal() {
@@ -919,15 +1198,6 @@ async function startRecording() {
   recTimerInterval = setInterval(() => {
     const ms = Date.now() - recStartTime;
     recTimerEl.textContent = fmtDuration(ms);
-
-    const WARN  = (3 * 60 + 45) * 60 * 1000;
-    const MAX   = 4 * 60 * 60 * 1000;
-    if (ms >= WARN && ms < WARN + 2000) {
-      recLabelEl.textContent = '⚠️ Noch 15 Minuten Aufnahmezeit';
-      recLabelEl.className   = 'warning';
-      showBanner('⚠️ Noch 15 Minuten Aufnahmezeit', 'warning');
-    }
-    if (ms >= MAX) stopRecording();
   }, 250);
 }
 
@@ -1031,9 +1301,22 @@ async function saveRecording() {
 }
 
 // ── Session erstellen ─────────────────────────────────────────────────────────
+function audioExtensionFromBlob(blob) {
+  const mt = blob.type || '';
+  if (mt.includes('webm'))  return 'webm';
+  if (mt.includes('ogg'))   return 'ogg';
+  if (mt.includes('mp4') || mt.includes('m4a')) return 'mp4';
+  if (mt.includes('wav'))   return 'wav';
+  if (mt.includes('mpeg') || mt.includes('mp3')) return 'mp3';
+  if (mt.includes('aac'))   return 'aac';
+  return 'webm'; // sicherer Fallback
+}
+
 async function createSession(title, audioBlob) {
   const id        = crypto.randomUUID();
   const createdAt = new Date().toISOString();
+  const audioExt  = audioExtensionFromBlob(audioBlob);
+  const audioFile = `audio.${audioExt}`;
 
   const session = {
     id,
@@ -1042,17 +1325,18 @@ async function createSession(title, audioBlob) {
     dirName:          sessionDirName({ title, createdAt }),
     transcriptStatus: 'idle',
     hasAudio:         true,
+    audioFile,
     transcript:       '',
     notes:            '',
     downloadProgress: null,
   };
 
   const dir = await getOrCreateDir(S.rootDir, session.dirName);
-  await writeFile(dir, 'audio.webm', audioBlob);
+  await writeFile(dir, audioFile, audioBlob);
   await writeFile(dir, 'transcript.txt', '');
   await writeFile(dir, 'notes.txt', '');
   await writeFile(dir, 'meta.json', JSON.stringify({
-    id, title, createdAt, transcriptStatus: 'idle'
+    id, title, createdAt, transcriptStatus: 'idle', audioFile
   }, null, 2));
 
   S.sessions.unshift(session);
@@ -1083,7 +1367,7 @@ async function runTranscription(session, audioBlob) {
         session.downloadProgress = null;
       }
       updateLiveStatus(session);
-    });
+    }, S.language === 'auto' ? null : S.language);
 
     session.transcript       = text;
     session.transcriptStatus = 'done';
@@ -1093,7 +1377,7 @@ async function runTranscription(session, audioBlob) {
     await writeFile(dir, 'transcript.txt', text);
     await writeFile(dir, 'meta.json', JSON.stringify({
       id: session.id, title: session.title,
-      createdAt: session.createdAt, transcriptStatus: 'done'
+      createdAt: session.createdAt, transcriptStatus: 'done', audioFile: session.audioFile || 'audio.webm'
     }, null, 2));
 
     await saveIndex();
@@ -1195,23 +1479,30 @@ document.addEventListener('click', () => {
 // ── Kontext-Menü ──────────────────────────────────────────────────────────────
 function showContextMenu(x, y, sessionId) {
   const menu = document.getElementById('context-menu');
-  menu.innerHTML = `
-    <button class="ctx-item" data-action="rename">✏️ Umbenennen</button>
-    <button class="ctx-item danger" data-action="delete">🗑 Löschen</button>
-  `;
+  menu.innerHTML = '';
+
+  const items = [
+    { label: '✏️ Umbenennen', action: 'rename', danger: false },
+    { label: '🗑 Löschen',    action: 'delete', danger: true  },
+  ];
+  items.forEach(({ label, action, danger }) => {
+    const btn = document.createElement('button');
+    btn.className = 'ctx-item' + (danger ? ' danger' : '');
+    btn.dataset.action = action;
+    btn.textContent = label;
+    btn.addEventListener('click', () => {
+      menu.classList.add('hidden');
+      if (action === 'rename') startRename(sessionId);
+      else                     confirmDeleteSession(sessionId);
+    });
+    menu.appendChild(btn);
+  });
+
   const mx = Math.min(x, window.innerWidth  - 180);
   const my = Math.min(y, window.innerHeight - 90);
   menu.style.left = mx + 'px';
   menu.style.top  = my + 'px';
   menu.classList.remove('hidden');
-
-  menu.querySelectorAll('.ctx-item').forEach(btn => {
-    btn.addEventListener('click', () => {
-      menu.classList.add('hidden');
-      if (btn.dataset.action === 'rename') startRename(sessionId);
-      else                                 confirmDeleteSession(sessionId);
-    });
-  });
 }
 
 function showExportMenu(anchorEl, kind) {
@@ -1219,24 +1510,24 @@ function showExportMenu(anchorEl, kind) {
   if (!s) return;
 
   const menu = document.getElementById('export-menu');
+  menu.innerHTML = '';
+
   const label = kind === 'transcript' ? 'Transkript' : 'Notizen';
-  menu.innerHTML = `
-    <button class="ctx-item" data-format="txt">${label} als .txt</button>
-    <button class="ctx-item" data-format="md">${label} als .md</button>
-    <button class="ctx-item" data-format="json">${label} als .json</button>
-  `;
+  [['txt', '.txt'], ['md', '.md'], ['json', '.json']].forEach(([format, ext]) => {
+    const btn = document.createElement('button');
+    btn.className = 'ctx-item';
+    btn.textContent = `${label} als ${ext}`;
+    btn.addEventListener('click', () => {
+      menu.classList.add('hidden');
+      exportSessionField(s, kind, format);
+    });
+    menu.appendChild(btn);
+  });
 
   const rect = anchorEl.getBoundingClientRect();
   menu.style.left = Math.min(rect.left, window.innerWidth - 210) + 'px';
   menu.style.top = Math.min(rect.bottom + 8, window.innerHeight - 130) + 'px';
   menu.classList.remove('hidden');
-
-  menu.querySelectorAll('.ctx-item').forEach(btn => {
-    btn.addEventListener('click', () => {
-      menu.classList.add('hidden');
-      exportSessionField(s, kind, btn.dataset.format);
-    });
-  });
 }
 
 function exportSessionField(session, kind, format) {
