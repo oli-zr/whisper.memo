@@ -36,7 +36,7 @@ self.addEventListener('message', async ({ data }) => {
 
   if (data.type !== 'transcribe') return;
 
-  const { audio, audioBuffer, sampleRate, modelSize, rootDirHandle, language } = data;
+  const { audio, audioBuffer, sampleRate, modelSize, rootDirHandle } = data;
 
   if (rootDirHandle) {
     try {
@@ -80,7 +80,7 @@ self.addEventListener('message', async ({ data }) => {
 
     const result = await transcriber(audioArray, {
       sampling_rate: sampleRate ?? 16000,
-      language: language || 'german',
+      language: 'german',
       task: 'transcribe',
       chunk_length_s: 30,   // lange Aufnahmen in 30s-Chunks
       stride_length_s: 5,
